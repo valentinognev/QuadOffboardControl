@@ -70,7 +70,7 @@ class System_Manager():
         self.prev_quat_ned_desbodyfrd_cmd = None
 
         self.destHeight = None
-        self.referencePoint = np.array([0,60,-40])
+        self.referencePoint = np.array([10,0,-10])
         self.tar_measurement_ned = np.array([0,0,0])
         self.heading_dir_ned = np.array([0,0,0]) 
         self.holdonHeight = None
@@ -79,21 +79,21 @@ class System_Manager():
         self.holdonTime = None       
         self.yawDefinedDir_ned = None   
         self.homingStage = HOMING_STAGE.NONE     
-        self.tar_measurement_ned = np.array([0,0,0])
+
         
         ##############################
         # start scenario definitions #
         ##############################
-        self.missionType = MISSION_TYPE.LISSAJOUS    # 1 - WAYPOINT, 2 - VELOCITY, 3 - CIRCLE, 4 - LISSAJOUS, 5 - TRACKER, 6 - SECTION
+        self.missionType = MISSION_TYPE.CIRCLE    # 1 - WAYPOINT, 2 - VELOCITY, 3 - CIRCLE, 4 - LISSAJOUS, 5 - TRACKER, 6 - SECTION
         self.yawControlType = YAW_COMMAND.HOLD_CUR_DIR   #YAW_COMMAND.CAMERA_DIR   #YAW_COMMAND.VELOCITY_DIR  # YAW_COMMAND.HOLD_CUR_DIR
         
-        self.maximalVelocity = 5 # m/s (horizontal)
+        self.maximalVelocity = 10 # m/s (horizontal)
         self.descentVelocity = 10
         self.originOffset_frd = np.array([0,0,0])   # target waypoint in mode 1 or center of the circle in mode 3
         self.terminalHomingAlowed = True 
         self.circleRadius = 10
         
-        self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass))
+        self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass), maximalVelocity=self.maximalVelocity)
         # self._control = Control(self._config_dir, self._log_dir, controller=AccelerationPIDController(mass=self.dronemass))
         # self._control = Control(self._config_dir, self._log_dir, controller=GeometricController(mass=self.dronemass))
         # self._control = Control(self._config_dir, self._log_dir, controller=AdaptiveGeometricController(mass=self.dronemass))
@@ -313,7 +313,7 @@ class System_Manager():
             print('--->referencePoint: %.3f %.3f %.3f, pos_ned:  %.3f %.3f %.3f '%( 
                 self.referencePoint[0], self.referencePoint[1], self.referencePoint[2],
                 pos_ned[0], pos_ned[1], pos_ned[2])+str(self.homingStage)+                
-                "   missionPoint:" + str(missionPoint)+ " deltaPos_frd:"+str(deltaPos_frd))#+"   delta_frd"+str(deltaPos_frd))
+                "   Command:" + str(command)+ " deltaPos_frd:"+str(deltaPos_frd))#+"   delta_frd"+str(deltaPos_frd))
             
             try:
                 print('<<--', np.linalg.norm(missionPoint[0:2]-pos_ned[0:2]))
@@ -580,9 +580,6 @@ class System_Manager():
                         self.holdonHeading = self.yawDefinedDir_ned
                         self.holdonPos_ned = self.currentData.pos_ned_m.ned
                         self.holdonTime = time.time()
-                        if self.missionType==MISSION_TYPE.TRACKER or self.missionType==MISSION_TYPE.SECTION:
-                    # self.referencePoint = np.array(self.currentData.pos_ned_m.ned)+self.currentData.quat_ned_bodyfrd.rotate_vec(self.originOffset_frd); self.referencePoint[2] = 0
-                            self.referencePoint = deepcopy(self.tar_measurement_ned)
                         
                         if self.currentData.throttle>5:
                             self._control.MaximalThrust = self._control.controlnode.param.mass*9.81/self.currentData.throttle*100
@@ -596,8 +593,6 @@ class System_Manager():
                         if not self._control.controlnode.use_integralTerm:
                             self._control.controlnode.resetIntegralErrorTerms()
                             self._control.controlnode.use_integralTerm = True
-                    # print("current id is: "+str(self.currentData.custom_mode_id)+"      offboard:"+str( self.currentData.offboardMode)+
-                    #       "   reference:" + str(self.referencePoint))
                             
                 elif topic == zmqTopics.topicMavlinkAttitudeQuat:                         # mavlink ATTITUDE_QUATERNION
                     time_boot_ms = data['time_boot_ms']        # Flight controller time

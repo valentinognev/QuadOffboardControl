@@ -107,6 +107,7 @@ class Hardware_Adapter():
         success = self._init_mavlink()
         self._current_data = Flight_Data()
         self._init_success = True
+        self._offboard_control_enabled = False
         if(not success):
             self._init_success = False
             print("mavlink failed to initialize")
@@ -143,7 +144,8 @@ class Hardware_Adapter():
             #     pass
             if(msg_dict['mavpackettype'] == 'HEARTBEAT'):
                 # print("received msg",msg)
-                current_mode = mavutil.mode_string_v10(msg)
+                current_mode = msg_dict['custom_mode']
+                self._offboard_control_enabled = True #(current_mode == 393216) # 0b10111100000000000000
                 msg_dict['mode_string'] = ( mavutil.mode_string_v10(msg))
           
             
@@ -167,24 +169,21 @@ class Hardware_Adapter():
                     thrustCmd = msg['thrustCmd']
                     self._send_goal_attitude(targetQuat, rpyRateCmd, thrustCmd)
                     
-                elif topic == zmqTopics.topicGuidenceCmdVelYaw:
-                    msg = pickle.loads(data[1])
-                    yawCmd = msg['yawCmd']
-                    velCmd = msg['velCmd']
+                elif topic == zmqTopics.topicGuidenceCmdVelYaw:     
+                    yawCmd = data['yawCmd']
+                    velCmd = data['velCmd']
                     self._send_setpoint(pos=None, vel=velCmd, acc=None, yaw=yawCmd, yaw_rate=None)
                     
                 elif topic == zmqTopics.topicGuidenceCmdAccYaw:
-                    msg = pickle.loads(data[1])
-                    yawCmd = msg['yawCmd']
-                    accCmd = msg['accCmd']
+                    yawCmd = data['yawCmd']
+                    accCmd = data['accCmd']
                     self._send_setpoint(pos=None, vel=None, acc=accCmd, yaw=yawCmd, yaw_rate=None)
                     
                 elif topic == zmqTopics.topicGuidenceCmdAttitude:
-                    msg = pickle.loads(data[1])
-                    targetQuat = Quaternion(x=msg['quatNedDesBodyFrdCmd'][1], y=msg['quatNedDesBodyFrdCmd'][2], z=msg['quatNedDesBodyFrdCmd'][3], w=msg['quatNedDesBodyFrdCmd'][0])
-                    rpyRateCmd = Rate_Cmd(roll=msg['rpyRateCmd'][0], pitch=msg['rpyRateCmd'][1], yaw=msg['rpyRateCmd'][2])
-                    thrustCmd = msg['thrustCmd']
-                    isRate = msg['isRate']
+                    targetQuat = Quaternion(x=data['quatNedDesBodyFrdCmd'][1], y=data['quatNedDesBodyFrdCmd'][2], z=data['quatNedDesBodyFrdCmd'][3], w=data['quatNedDesBodyFrdCmd'][0])
+                    rpyRateCmd = Rate_Cmd(roll=data['rpyRateCmd'][0], pitch=data['rpyRateCmd'][1], yaw=data['rpyRateCmd'][2])
+                    thrustCmd = data['thrustCmd']
+                    isRate = data['isRate']
                     if isRate:
                         self._send_goal_attitude(goal_thrust=thrustCmd, goal_attitude=None, rates=rpyRateCmd)
                     else:
@@ -380,11 +379,11 @@ class Hardware_Adapter():
         return success
 
 #################################################################################################################
-    def send_setpoint(self, pos=None, vel=None, acc=None, yaw=None, yaw_rate=None):
-        if(self._disable_offboard_control):
+    def _send_setpoint(self, pos=None, vel=None, acc=None, yaw=None, yaw_rate=None):
+        if(not self._offboard_control_enabled):
             return
         time_boot_ms = 0
-        coordinate_frame =mavutil.mavlink.MAV_FRAME_GLOBAL_INT
+        coordinate_frame =mavutil.mavlink.MAV_FRAME_LOCAL_NED
         target_system = self.mavlink_connection.target_system
         target_component = self.mavlink_connection.target_component
         # Bitmask to indicate which fields should be ignored by the vehicle 
@@ -404,25 +403,25 @@ class Hardware_Adapter():
         # Use Yaw Rate : 0b010111111111 / 0x05FF / 1535 (decimal)    
         type_mask = 0b000000000000
         if pos is None:
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_X_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_Y_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_Z_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE
             pos = np.zeros(3)
         if vel is None:
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_VX_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_VY_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_VZ_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE
             vel = np.zeros(3)
         if acc is None:
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_AFX_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_AFY_IGNORE
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_AFZ_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
             acc = np.zeros(3)
         if yaw is None:
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
             yaw = 0
         if yaw_rate is None:
-            type_mask = type_mask | mavutil.mavlink.MAV_POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+            type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
             yaw_rate = 0
         north = pos[0];        east = pos[1];        down = pos[2]
         vx = vel[0];        vy = vel[1];        vz = vel[2]
@@ -449,8 +448,7 @@ class Hardware_Adapter():
 
 #################################################################################################################
     def _send_goal_attitude(self, goal_thrust, goal_attitude:Quaternion=None, rates:Rate_Cmd=None):
-
-        if(self._disable_offboard_control):
+        if(not self._offboard_control_enabled):
             return
         # print("sending attitude command", goal_thrust)
         type_mask= 0b000000000000 #ignore rates

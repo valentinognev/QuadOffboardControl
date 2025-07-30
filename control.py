@@ -58,8 +58,8 @@ class HOMING_STAGE(Enum):
 ###############################################################################################################################################
 ###############################################################################################################################################
 class Control():
-    def __init__(self, config_dir, log_directory, controller):   # image size in pixels (width, height)
-
+    def __init__(self, config_dir, log_directory, controller, maximalVelocity=MAXIMALVELOCITY):   # image size in pixels (width, height)
+        self.maximalVelocity = maximalVelocity
         self._start_vertical_los_deg = None
         self._noise_sim = None
         ############################## Parameters ################################
@@ -145,7 +145,7 @@ class Control():
         if self.controlnode.controllerType == "VelocityPID":
             velCmdDir = f_total/np.linalg.norm(f_total)
             velCmdAbs = np.linalg.norm(f_total)
-            velCmdAbsClipped = np.clip(velCmdAbs, 0, MAXIMALVELOCITY)
+            velCmdAbsClipped = np.clip(velCmdAbs, 0, self.maximalVelocity)
             velCmd = velCmdDir * velCmdAbsClipped
             command = velCmd
         elif self.controlnode.controllerType == "AccelerationPID":

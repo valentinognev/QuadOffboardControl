@@ -13,14 +13,13 @@ class VelocityPIDControllerParameters:
 
             # controller
         # Position gains
-        commonFactor = 1.5
-        self.kX = np.diag([1.0, 1.0, 1.0])*0.4*commonFactor  # Position gains
-        self.kV = np.diag([6, 6, 6])*commonFactor # Velocity gains
+        commonFactor = 1
+        self.kX = np.diag([1.0, 1.0, 1.0])*commonFactor  # Position gains
+        self.kV = np.diag([3.0, 3.0, 1.0])*commonFactor # Velocity gains
         # Integral gains
-        self.kIX = np.diag([0, 0, 0.1])*commonFactor # Position integral gains
-        self.kIV = np.diag([1, 1, 1])*2 # Velocity integral gains
-        # Differentiation gains
-        self.kDV = np.diag([0.1, 0.1, 0.1])
+        self.kIX = np.diag([0, 0, 0])*commonFactor # Position integral gains
+        self.kIV = np.diag([1, 1, 1])*0 # Velocity integral gains
+
         self.c1 = 1.0  # Parameters for Position decoupled-yaw integral control
         
         self.sat_sigmaX = 3
@@ -77,7 +76,7 @@ class VelocityPIDController:
 
         kX = self.param.kX if (pos_control and xd is not None) else np.zeros((3,3))
         kIX = self.param.kIX if (pos_control and xd is not None) else np.zeros((3,3))
-        kV = self.param.kV if (vel_control and xd_dot is not None) else np.zeros((3,3))
+        kV = self.param.kV #if (vel_control and xd_dot is not None) else np.zeros((3,3))
         kIV = self.param.kIV if (vel_control and xd_dot is not None) else np.zeros((3,3))
 
         self.update_current_time()
@@ -86,7 +85,7 @@ class VelocityPIDController:
         # Translational error functions
         
         eX = (xd - pos_ned)     if (pos_control and xd is not None)     else np.zeros(3) # position error - eq (11)
-        eV = (xd_dot - vel_ned) if (vel_control and xd_dot is not None) else np.zeros(3) # velocity error - eq (12)
+        eV = (xd_dot - vel_ned) #if (vel_control and xd_dot is not None) else np.zeros(3) # velocity error - eq (12)
 
         # Position integral terms
         if self.use_integralTerm:
