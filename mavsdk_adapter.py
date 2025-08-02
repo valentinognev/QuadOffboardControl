@@ -17,7 +17,10 @@ import multiprocessing
 from multiprocessing import  Lock
 from copy import deepcopy
 
-import pymavlink
+from mavsdk import System
+from mavsdk.offboard import (Attitude, AttitudeRate, OffboardError, VelocityNedYaw, VelocityBodyYawspeed)
+import asyncio
+
 
 # from config_parser import Config_Parser
 import os
@@ -38,6 +41,8 @@ RELEVANT_MAVLINK_MESSAGES = ['ALTITUDE',
                              'ATTITUDE_QUATERNION', 
                              'LOCAL_POSITION_NED', 
                              'GLOBAL_POSITION_INT', 
+                             'ODOMETRY',
+                             'VELOCITY_NED',
                              'ATTITUDE_TARGET', 
                              'CURRENT_MODE', 
                              'HEARTBEAT', 
@@ -52,6 +57,8 @@ pubTopicsList = [
                [zmqTopics.topicMavlinkAttitudeQuat,     zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkLocalPositionNed, zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkGlobalPositionInt,zmqTopics.topicMavlinkPort],
+               [zmqTopics.topicMavlinkOdometry,         zmqTopics.topicMavlinkPort],
+               [zmqTopics.topicMavlinkVelocityNed,      zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkAttitudeTarget,   zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkCurrentMode,      zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkHeartbeat,        zmqTopics.topicMavlinkPort],
@@ -68,8 +75,8 @@ for topic in pubTopicsList:
     mpsDict[topic[0]] = mps.MPS(topic[0])
 
 subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
-                                zmqTopics.topicGuidenceCmdVelYaw,
-                                zmqTopics.topicGuidenceCmdAccYaw,
+                                zmqTopics.topicGuidenceCmdVelNedYaw,
+                                zmqTopics.topicGuidenceCmdVelBodyYawRate,
                                 zmqTopics.topicGuidenceCmdTakeoff,
                                 zmqTopics.topicGuidenceCmdLand,
                                 zmqTopics.topicGuidanceCmdArm,
@@ -105,93 +112,293 @@ class Hardware_Adapter():
         self._current_airspeed = 0
         self._mavlink_logger = Logger("mavlink", log_dir=self._log_dir, save_log_to_file=True, print_logs_to_console=False, datatype="TXT")
 
-        success = self._init_mavlink()
-        self._current_data = Flight_Data()
-        self._init_success = True
         self._offboard_control_enabled = False
-        if(not success):
-            self._init_success = False
-            print("mavlink failed to initialize")
-            return
-        # self._thread_frequency_hz = 300
-    
-        # main_frame_proc = multiprocessing.Process(target=self._main, args={})
-        # main_frame_proc.start()
 
 #################################################################################################################
-    def init_succeeded(self):
-        return self._init_success
+    async def run(self):
+        # Start the tasks
+        drone = System()
+        await drone.connect(system_address='udp://:14540')
+        tasks = [asyncio.ensure_future(self.attitude(drone)),
+                 asyncio.ensure_future(self.highresimu(drone)),   #TODO: add highresimu to mavsdk
+                 asyncio.ensure_future(self.attitudequat(drone)),
+                 asyncio.ensure_future(self.odometry(drone)),
+                 asyncio.ensure_future(self.positionned(drone)),
+                 asyncio.ensure_future(self.globalpositionint(drone)),
+                 asyncio.ensure_future(self.altitudem(drone)),
+                 asyncio.ensure_future(self.listenerToCommands(drone)),
+                 asyncio.ensure_future(self.status_text(drone)),
+                 asyncio.ensure_future(self.velocity_ned(drone)),
+                 asyncio.ensure_future(self.scaled_imu(drone)),
+                 asyncio.ensure_future(self.scaled_pressure(drone)),
+                 asyncio.ensure_future(self.rc_status(drone)),
+                 asyncio.ensure_future(self.raw_imu(drone)),
+                 ]
 
-    def listenerToMavlink(self):
-        msg = self.mavlink_connection.recv_match( blocking=True, timeout=0.001)
-        if(msg is None):
-            return
-        if(msg.get_type() == "BAD_DATA"):
-            return
-        msg_dict = msg.to_dict()
-        msg_dict['local-ts'] = time.time()
+        await asyncio.gather(*tasks)
 
-        if 'time_boot_ms' in msg_dict.keys():
-            pass
-        
-        if(msg_dict['mavpackettype'] == 'HEARTBEAT'):
-            msg_dict['mode_string'] = ( mavutil.mode_string_v10(msg))
+    async def attitude(self, drone):
+        async for attitude in drone.telemetry.attitude_euler():
+            data = {}
+            data['ts'] = time.time()
+            data['time_boot_ms'] = attitude.timestamp_us/1000.0
+            data['roll'] = attitude.roll_deg
+            data['pitch'] = attitude.pitch_deg
+            data['yaw'] = attitude.yaw_deg
+
+            sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
+    
+    async def attitudeRate(self, drone):
+        async for attitudeRate in drone.telemetry.attitude_angular_velocity():
+            data = {}
+            data['ts'] = time.time()
+            data['time_boot_ms'] = attitudeRate.timestamp_us/1000.0
+            data['roll'] = attitudeRate.roll_deg
+            data['pitch'] = attitudeRate.pitch_deg
+            data['yaw'] = attitudeRate.yaw_deg
+            data['thrust'] = attitudeRate.thrust_percentage
+
+            sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
+
+    async def highresimu(self, drone):
+        async for imu in drone.telemetry.imu():
+            data = {}
+            data['ts'] = time.time()
+            data['time_boot_ms'] = imu.timestamp_us/1000.0
+            data['xacc'] = imu.acceleration_frd.forward_m_s2
+            data['yacc'] = imu.acceleration_frd.right_m_s2
+            data['zacc'] = imu.acceleration_frd.down_m_s2
+            data['xgyro'] = imu.angular_velocity_frd.forward_rad_s
+            data['ygyro'] = imu.angular_velocity_frd.right_rad_s
+            data['zgyro'] = imu.angular_velocity_frd.down_rad_s
+            data['xmag'] = imu.magnetic_field_frd.forward_gauss
+            data['ymag'] = imu.magnetic_field_frd.right_gauss
+            data['zmag'] = imu.magnetic_field_frd.down_gauss
+            data['temperature'] = imu.temperature_degc
             
-        if msg_dict['mavpackettype'] in RELEVANT_MAVLINK_MESSAGES:
-            ind = RELEVANT_MAVLINK_MESSAGES.index(msg_dict['mavpackettype'])
-            sockPub.send_multipart([pubTopicsList[ind][0], pickle.dumps(msg_dict)])
-        else:
-            pass
-            # print(str(msg_dict))
-            # self._mavlink_logger.log(str(msg_dict))
+            sockPub.send_multipart([zmqTopics.topicMavlinkHighresIMU, pickle.dumps(data)])
+
+    async def attitudequat(self, drone):
+        async for attitudequat in drone.telemetry.attitude_quaternion():
+            data = {}
+            data['ts'] = time.time()
+            data['time_boot_ms'] = attitudequat.timestamp_us/1000.0
+            data['q1'] = attitudequat.w
+            data['q2'] = attitudequat.x
+            data['q3'] = attitudequat.y
+            data['q4'] = attitudequat.z
+
+            sockPub.send_multipart([zmqTopics.topicMavlinkAttitudeQuat, pickle.dumps(data)])
+
+    async def odometry(self, drone):
+        async for odometry in drone.telemetry.odometry():
+            data = {}
+            data['ts'] = time.time()
+            data['roll_rad_s'] = odometry.angular_velocity_body.roll_rad_s
+            data['pitch_rad_s'] = odometry.angular_velocity_body.pitch_rad_s
+            data['yaw_rad_s'] = odometry.angular_velocity_body.yaw_rad_s           
+            # data['pose_cov_mat'] = odometry.pose_covariance.covariance_matrix            
+            data['x_m'] = odometry.position_body.x_m
+            data['y_m'] = odometry.position_body.y_m
+            data['z_m'] = odometry.position_body.z_m
+            data['q1'] = odometry.q.w
+            data['q2'] = odometry.q.x
+            data['q3'] = odometry.q.y
+            data['q4'] = odometry.q.z
+            data['time_boot_ms'] = odometry.time_usec/1000.0
+            data['vel_body_x_m_s'] = odometry.velocity_body.x_m_s
+            data['vel_body_y_m_s'] = odometry.velocity_body.y_m_s
+            data['vel_body_z_m_s'] = odometry.velocity_body.z_m_s
+            # data['velocity_covariance'] = odometry.velocity_covariance.covariance_matrix
+            data['frame_id'] = odometry.frame_id.name
+            data['child_frame_id'] = odometry.child_frame_id.name
+            
+            sockPub.send_multipart([zmqTopics.topicMavlinkOdometry, pickle.dumps(data)])
+
+    async def positionned(self, drone):
+        async for positionned in drone.telemetry.position_velocity_ned():
+            data = {}
+            data['ts'] = time.time()
+            data['north_m'] = positionned.position.north_m
+            data['east_m'] = positionned.position.east_m
+            data['down_m'] = positionned.position.down_m
+            data['vx_m_s'] = positionned.velocity.north_m_s
+            data['vy_m_s'] = positionned.velocity.east_m_s
+            data['vz_m_s'] = positionned.velocity.down_m_s
+            sockPub.send_multipart([zmqTopics.topicMavlinkLocalPositionNed, pickle.dumps(data)])
+
+    async def globalpositionint(self, drone):
+        async for positionlla in drone.telemetry.position():
+            data = {}
+            data['ts'] = time.time()
+            data['lat'] = positionlla.latitude_deg
+            data['lon'] = positionlla.longitude_deg
+            data['alt'] = positionlla.absolute_altitude_m
+            data['relative_alt'] = positionlla.relative_altitude_m
+            sockPub.send_multipart([zmqTopics.topicMavlinkGlobalPositionInt, pickle.dumps(data)])
+
+    async def altitudem(self, drone):
+        async for altitudem in drone.telemetry.altitude():
+            data = {}
+            data['ts'] = time.time()
+            data['amsl_m'] = altitudem.altitude_amsl_m
+            data['local_m'] = altitudem.altitude_local_m
+            data['monotonic_m'] = altitudem.altitude_monotonic_m
+            data['relative_m'] = altitudem.altitude_relative_m
+            data['terrain_m'] = altitudem.altitude_terrain_m
+            data['bottom_clearance_m'] = altitudem.bottom_clearance_m
+
+            sockPub.send_multipart([zmqTopics.topicMavlinkAltitude, pickle.dumps(data)])
+                        
+    async def status_text(self, drone):
+        async for status_text in drone.telemetry.status_text():
+            data = {}
+            data['ts'] = time.time()
+            data['text'] = status_text.text
+     
+    async def velocity_ned(self, drone):
+        async for velocity_ned in drone.telemetry.velocity_ned():
+            data = {}
+            data['ts'] = time.time()
+            data['vx_m_s'] = velocity_ned.north_m_s
+            data['vy_m_s'] = velocity_ned.east_m_s
+            data['vz_m_s'] = velocity_ned.down_m_s
+
+    async def scaled_imu(self, drone):
+        async for scaled_imu in drone.telemetry.scaled_imu():
+            data = {}
+            data['ts'] = time.time()
+            data['xacc'] = scaled_imu.acceleration_frd.forward_m_s2
+            data['yacc'] = scaled_imu.acceleration_frd.right_m_s2
+            data['zacc'] = scaled_imu.acceleration_frd.down_m_s2
+            
+    async def scaled_pressure(self, drone):
+        async for scaled_pressure in drone.telemetry.scaled_pressure():
+            data = {}
+            data['ts'] = time.time()
+            data['time_boot_ms'] = scaled_pressure.timestamp_us/1000.0
+            data['absolute_press_hpa'] = scaled_pressure.absolute_pressure_hpa
+            data['diff_press_hpa'] = scaled_pressure.differential_pressure_hpa
+            data['temperature_deg'] = scaled_pressure.temperature_deg
+
+    async def rc_status(self, drone):
+        async for rc_status in drone.telemetry.rc_status():
+            data = {}
+            data['is_available'] = rc_status.is_available
+            data['signal_strength_percent'] = rc_status.signal_strength_percent
+            data['was_available_once'] = rc_status.was_available_once
+
+    async def raw_imu(self, drone):
+        async for raw_imu in drone.telemetry.raw_imu():
+            data = {}
+            data['ts'] = time.time()
+            data['xacc'] = raw_imu.acceleration_frd.forward_m_s2
+            data['yacc'] = raw_imu.acceleration_frd.right_m_s2
+            data['zacc'] = raw_imu.acceleration_frd.down_m_s2
+            
+    async def raw_gps(self, drone):
+        async for raw_gps in drone.telemetry.raw_gps():
+            data = {}
+            data['ts'] = time.time()
+            data['lat'] = raw_gps.latitude_deg
+            data['lon'] = raw_gps.longitude_deg
+            data['alt'] = raw_gps.altitude_m
+            
+    async def heading(self, drone):
+        async for heading in drone.telemetry.heading():
+            data = {}
+            data['ts'] = time.time()
+            data['heading_deg'] = heading.heading_deg
+            
+    async def health(self, drone):
+        async for health in drone.telemetry.health():
+            data = {}
+            data['ts'] = time.time()
+            data['is_gyrometer_calibration_ok'] = health.is_gyrometer_calibration_ok
+            data['is_accelerometer_calibration_ok'] = health.is_accelerometer_calibration_ok
+            data['is_magnetometer_calibration_ok'] = health.is_magnetometer_calibration_ok
+
+    async def flight_mode(self, drone):
+        async for flight_mode in drone.telemetry.flight_mode():
+            data = {}
+            data['ts'] = time.time()
+            data['flight_mode'] = flight_mode.flight_mode
+            
+    async def ground_truth(self, drone):
+        async for ground_truth in drone.telemetry.ground_truth():
+            data = {}
+            data['ts'] = time.time()
+            data['lat'] = ground_truth.latitude_deg
+            data['lon'] = ground_truth.longitude_deg
+            data['alt'] = ground_truth.altitude_m
+    
+    async def in_air(self, drone):
+        async for in_air in drone.telemetry.in_air():
+            data = {}
+            data['ts'] = time.time()
+            data['in_air'] = in_air.in_air
+            
+    async def landing_state(self, drone):
+        async for landing_state in drone.telemetry.landing_state():
+            data = {}
+            data['ts'] = time.time()
+            data['landing_state'] = landing_state.landing_state
+            
 ################################################################################################################
-    def listenerToCommands(self):
-        ret = zmq.select([subSock], [], [], timeout=0.001)
-        # ret = ret[0]
-        if ret[0] is None or len(ret[0]) == 0:
-            return
-        data = subSock.recv_multipart()
-        topic = data[0]
-        data = pickle.loads(data[1])
-        
-        if topic == zmqTopics.topicGuidenceCmdAttitude:                           # mavlink ATTITUDE
-            msg = pickle.loads(data[1])
-            targetQuat = Quaternion(x=msg['quatNedDesBodyFrdCmd'][1], y=msg['quatNedDesBodyFrdCmd'][2], z=msg['quatNedDesBodyFrdCmd'][3], w=msg['quatNedDesBodyFrdCmd'][0])
-            rpyRateCmd = Rate_Cmd(roll=msg['rpyRateCmd'][0], pitch=msg['rpyRateCmd'][1], yaw=msg['rpyRateCmd'][2])
-            thrustCmd = msg['thrustCmd']
-            self._send_goal_attitude(targetQuat, rpyRateCmd, thrustCmd)
+    async def listenerToCommands(self, drone):
+        while True:
+            ret = zmq.select([subSock], [], [], timeout=0.001)
+            # ret = ret[0]
+            if ret[0] is None or len(ret[0]) == 0:
+                return
+            data = subSock.recv_multipart()
+            topic = data[0]
+            data = pickle.loads(data[1])
             
-        elif topic == zmqTopics.topicGuidenceCmdVelYaw:     
-            yawCmd = data['yawCmd']
-            velCmd = data['velCmd']
-            self._send_setpoint(pos=None, vel=velCmd, acc=None, yaw=yawCmd, yaw_rate=None)
-            
-        elif topic == zmqTopics.topicGuidenceCmdAccYaw:
-            yawCmd = data['yawCmd']
-            accCmd = data['accCmd']
-            self._send_setpoint(pos=None, vel=None, acc=accCmd, yaw=yawCmd, yaw_rate=None)
-            
-        elif topic == zmqTopics.topicGuidenceCmdAttitude:
-            targetQuat = Quaternion(x=data['quatNedDesBodyFrdCmd'][1], y=data['quatNedDesBodyFrdCmd'][2], z=data['quatNedDesBodyFrdCmd'][3], w=data['quatNedDesBodyFrdCmd'][0])
-            rpyRateCmd = Rate_Cmd(roll=data['rpyRateCmd'][0], pitch=data['rpyRateCmd'][1], yaw=data['rpyRateCmd'][2])
-            thrustCmd = data['thrustCmd']
-            isRate = data['isRate']
-            if isRate:
-                self._send_goal_attitude(goal_thrust=thrustCmd, goal_attitude=None, rates=rpyRateCmd)
-            else:
-                self._send_goal_attitude(goal_thrust=thrustCmd, goal_attitude=targetQuat, rates=None)
-            
-        elif topic == zmqTopics.topicGuidenceCmdTakeoff:
-            msg = pickle.loads(data[1])
-            takeoff_altitude = msg['takeoff_altitude']
-            self._send_takeoff_cmd(takeoff_altitude)
-            
-        elif topic == zmqTopics.topicGuidenceCmdLand:
-            self._send_land_cmd()
-            
-        elif topic == zmqTopics.topicGuidanceCmdArm:
-            msg = pickle.loads(data[1])
-            self._arm()
+            if topic == zmqTopics.topicGuidenceCmdAttitude:                           # mavlink ATTITUDE
+                msg = pickle.loads(data[1])
+                targetQuat = Quaternion(x=msg['quatNedDesBodyFrdCmd'][1], y=msg['quatNedDesBodyFrdCmd'][2], z=msg['quatNedDesBodyFrdCmd'][3], w=msg['quatNedDesBodyFrdCmd'][0])
+                rpyRateCmd = Rate_Cmd(roll=msg['rpyRateCmd'][0], pitch=msg['rpyRateCmd'][1], yaw=msg['rpyRateCmd'][2])
+                thrustCmd = msg['thrustCmd']
+                targetRPY = targetQuat.to_euler()
+                isRate = data['isRate']
+                if isRate:
+                    await drone.offboard.set_attitude(Attitude(roll_deg=targetRPY.roll, 
+                                                            pitch_deg=targetRPY.pitch, 
+                                                            yaw_deg=targetRPY.yaw, 
+                                                            thrust_value=thrustCmd))
+                else:
+                    await drone.offboard.set_attitude_rate(AttitudeRate(roll_deg_s=rpyRateCmd.roll, 
+                                                                pitch_deg_s=rpyRateCmd.pitch, 
+                                                                yaw_deg_s=rpyRateCmd.yaw, 
+                                                                thrust_value=thrustCmd))
+                
+            elif topic == zmqTopics.topicGuidenceCmdVelNedYaw:     
+                yawCmd = data['yawCmd']
+                velCmd = data['velCmd']
+                await drone.offboard.set_velocity_ned(VelocityNedYaw(north_m_s=velCmd[0], east_m_s=velCmd[1], down_m_s=velCmd[2], yaw_deg=yawCmd))
+                
+            elif topic == zmqTopics.topicGuidenceCmdVelBodyYawRate:     
+                yawRateCmd = data['yawRateCmd']
+                velCmd = data['velCmd']
+                await drone.offboard.set_velocity_body(VelocityBodyYawspeed(forward_m_s=velCmd[0], right_m_s=velCmd[1], down_m_s=velCmd[2], yawspeed_deg_s=yawRateCmd))
+                
+            # elif topic == zmqTopics.topicGuidenceCmdAccYaw:
+            #     yawCmd = data['yawCmd']
+            #     accCmd = data['accCmd']
+            #     self._send_setpoint(pos=None, vel=None, acc=accCmd, yaw=yawCmd, yaw_rate=None)
+                
+            # elif topic == zmqTopics.topicGuidenceCmdTakeoff:
+            #     msg = pickle.loads(data[1])
+            #     takeoff_altitude = msg['takeoff_altitude']
+            #     self._send_takeoff_cmd(takeoff_altitude)
+                
+            # elif topic == zmqTopics.topicGuidenceCmdLand:
+            #     self._send_land_cmd()
+                
+            # elif topic == zmqTopics.topicGuidanceCmdArm:
+            #     msg = pickle.loads(data[1])
+            #     self._arm()
                     
         
 #################################################################################################################
@@ -204,33 +411,33 @@ class Hardware_Adapter():
             return 
  
         print("Connected to PX4 autopilot")
-        print(self.mavlink_connection.mode_mapping())
-        mode_id = self.mavlink_connection.mode_mapping()["TAKEOFF"][1]
+        print(self.mavsdk.mode_mapping())
+        mode_id = self.mavsdk.mode_mapping()["TAKEOFF"][1]
         print(mode_id)
-        msg = self.mavlink_connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
+        msg = self.mavsdk.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
         starting_alt = msg.alt / 1000
         takeoff_params = [0, 0, 0, 0, float("NAN"), float("NAN"), starting_alt + takeoff_altitude]
         time.sleep(1)
         # Change mode to takeoff (PX4)
-        self.mavlink_connection.mav.command_long_send(self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component, mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+        self.mavsdk.mav.command_long_send(self.mavsdk.target_system,
+            self.mavsdk.target_component, mavutil.mavlink.MAV_CMD_DO_SET_MODE,
                                     0, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mode_id, 0, 0, 0, 0, 0)
-        ack_msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        ack_msg = self.mavsdk.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         print(f"Change Mode ACK:  {ack_msg}")
         time.sleep(1)
  
          # Command Takeoff
-        self.mavlink_connection.mav.command_long_send(
-            self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(
+            self.mavsdk.target_system,
+            self.mavsdk.target_component,
             mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, takeoff_params[0], takeoff_params[1], takeoff_params[2], takeoff_params[3], takeoff_params[4], takeoff_params[5], takeoff_params[6])
         
         time.sleep(1)
        # Arm the UAS
-        self.mavlink_connection.mav.command_long_send(self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(self.mavsdk.target_system,
+            self.mavsdk.target_component,
                                             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0)
-        arm_msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        arm_msg = self.mavsdk.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         print(f"Arm ACK:  {arm_msg}")
 
         time.sleep(5)
@@ -244,33 +451,33 @@ class Hardware_Adapter():
             return 
  
         print("Connected to PX4 autopilot")
-        print(self.mavlink_connection.mode_mapping())
-        mode_id = self.mavlink_connection.mode_mapping()["TAKEOFF"][1]
+        print(self.mavsdk.mode_mapping())
+        mode_id = self.mavsdk.mode_mapping()["TAKEOFF"][1]
         print(mode_id)
-        msg = self.mavlink_connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
+        msg = self.mavsdk.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
         starting_alt = msg.alt / 1000
         takeoff_params = [0, 0, 0, 0, float("NAN"), float("NAN"), starting_alt + 1]
         time.sleep(1)
         # Change mode to takeoff (PX4)
-        self.mavlink_connection.mav.command_long_send(self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component, mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+        self.mavsdk.mav.command_long_send(self.mavsdk.target_system,
+            self.mavsdk.target_component, mavutil.mavlink.MAV_CMD_DO_SET_MODE,
                                     0, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, mode_id, 0, 0, 0, 0, 0)
-        ack_msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        ack_msg = self.mavsdk.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         print(f"Change Mode ACK:  {ack_msg}")
         time.sleep(1)
  
         #  Command Takeoff
-        self.mavlink_connection.mav.command_long_send(
-            self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(
+            self.mavsdk.target_system,
+            self.mavsdk.target_component,
             mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, takeoff_params[0], takeoff_params[1], takeoff_params[2], takeoff_params[3], takeoff_params[4], takeoff_params[5], takeoff_params[6])
         
         time.sleep(1)
        # Arm the UAS
-        self.mavlink_connection.mav.command_long_send(self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(self.mavsdk.target_system,
+            self.mavsdk.target_component,
                                             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0)
-        arm_msg = self.mavlink_connection.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        arm_msg = self.mavsdk.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         print(f"Arm ACK:  {arm_msg}")
 
         time.sleep(1)
@@ -331,53 +538,14 @@ class Hardware_Adapter():
             data = pickle.loads(new_data_dict[1])
         pass
                         # print(e)
-
-#################################################################################################################
-    def _init_mavlink(self):
-        try:
-            self.mavlink_connection = mavutil.mavlink_connection('udp:127.0.0.1:14540')
-            self.mavlink_connection.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
-            # self.mavlink_connection.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-            #                                 mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
-            ARDUPILOT = False
-            if(ARDUPILOT):
-                self.mavlink_connection.mav.request_data_stream_send(self.mavlink_connection.target_system, 
-                                                                     self.mavlink_connection.target_component,
-                                                                     mavutil.mavlink.MAV_DATA_STREAM_ALL,
-                                                                     MAVLINK_RATE_HZ, 1)
-        except Exception as e:
-            print("failed to initialize mavlink connection with error: "+str(e))
-            return
-        count = 0
-        success = True
-        out = None
-        while(count < 3):
-            count = count + 1
-            try:
-                self.mavlink_connection.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
-                                                mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
-                out = self.mavlink_connection.wait_heartbeat(timeout=2)
-                if(out is not None):
-                    break
-
-            except:
-                pass
-        if(out is None):
-            success = False
-        else:
-            self._mavlink_parser = Mavlink_Parser()
-        #print("mode mapping:",self.mavlink_connection.mode_mapping())
-        # self.arm()
-        return success
-
 #################################################################################################################
     def _send_setpoint(self, pos=None, vel=None, acc=None, yaw=None, yaw_rate=None):
         # if(not self._offboard_control_enabled):
         #     return
         time_boot_ms = 0
         coordinate_frame =mavutil.mavlink.MAV_FRAME_LOCAL_NED
-        target_system = self.mavlink_connection.target_system
-        target_component = self.mavlink_connection.target_component
+        target_system = self.mavsdk.target_system
+        target_component = self.mavsdk.target_component
         # Bitmask to indicate which fields should be ignored by the vehicle 
         # (see POSITION_TARGET_TYPEMASK enum) https://ardupilot.org/dev/docs/copter-commands-in-guided-mode.html
         # bit1:PosX, bit2:PosY, bit3:PosZ, bit4:VelX, bit5:VelY, bit6:VelZ, 
@@ -419,7 +587,7 @@ class Hardware_Adapter():
         vx = vel[0];        vy = vel[1];        vz = vel[2]
         afx = acc[0];        afy = acc[1];        afz = acc[2]
 
-        self.mavlink_connection.mav.set_position_target_local_ned_send(
+        self.mavsdk.mav.set_position_target_local_ned_send(
             time_boot_ms,
             target_system,
             target_component,
@@ -463,9 +631,9 @@ class Hardware_Adapter():
         body_yaw_rate = rates.rpydot[2]
         thrust_bodyfrd = [0,0,0]
         thrust = goal_thrust
-        self.mavlink_connection.mav.set_attitude_target_send(
+        self.mavsdk.mav.set_attitude_target_send(
             time_boot_ms,
-            self.mavlink_connection.target_system,
+            self.mavsdk.target_system,
             target_component,
             type_mask,
             q,
@@ -485,14 +653,14 @@ class Hardware_Adapter():
         if(self._disable_offboard_control):
             return
         mode = "OFFBOARD"
-        if mode not in  self.mavlink_connection.mode_mapping():
+        if mode not in  self.mavsdk.mode_mapping():
             print("unknown mode")
         else:
             
-            mode_id = self.mavlink_connection.mode_mapping()[mode]
-            self.mavlink_connection.mav.command_long_send(
-                self.mavlink_connection.target_system, 
-                self.mavlink_connection.target_component,
+            mode_id = self.mavsdk.mode_mapping()[mode]
+            self.mavsdk.mav.command_long_send(
+                self.mavsdk.target_system, 
+                self.mavsdk.target_component,
                 mavutil.mavlink.MAV_CMD_DO_SET_MODE, 
                 0,
                 mode_id[0], 
@@ -507,27 +675,23 @@ class Hardware_Adapter():
             return
         if(self._disable_offboard_control):
             return 
-        self.mavlink_connection.mav.command_long_send(
-            self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(
+            self.mavsdk.target_system,
+            self.mavsdk.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
             1, 0, 0, 0, 0, 0, 0)
 
 #################################################################################################################
     def _send_land_cmd(self):
-        self.mavlink_connection.mav.command_long_send(
-            self.mavlink_connection.target_system,
-            self.mavlink_connection.target_component,
+        self.mavsdk.mav.command_long_send(
+            self.mavsdk.target_system,
+            self.mavsdk.target_component,
             mavutil.mavlink.MAV_CMD_NAV_LAND, 0, 0, 0, 0, 0, 0, 0, 0)
 
 
 if __name__ == '__main__':
-    hardware_adapter = Hardware_Adapter(log_dir="logs")
-    while(1):
-        hardware_adapter.listenerToMavlink()
-        hardware_adapter.listenerToCommands()
-        time.sleep(.0001)
+    asyncio.run(Hardware_Adapter("logs").run())
 
     
 

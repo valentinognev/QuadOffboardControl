@@ -108,6 +108,7 @@ class System_Manager():
         
         topicsList = [ 
                        [zmqTopics.topicMavlinkAttitude,         zmqTopics.topicMavlinkPort],
+                       [zmqTopics.topicMavlinkAttitudeRate,     zmqTopics.topicMavlinkPort],
                        [zmqTopics.topicMavlinkAltitude,         zmqTopics.topicMavlinkPort],
                        [zmqTopics.topicMavlinkHighresIMU,       zmqTopics.topicMavlinkPort],
                        [zmqTopics.topicMavlinkAttitudeQuat,     zmqTopics.topicMavlinkPort],          
@@ -536,10 +537,12 @@ class System_Manager():
         return (x, x_dot, x_2dot, x_3dot, x_4dot), (b1, b1_dot, b1_2dot), (pos_control, vel_control, yaw_control)
 #################################################################################################################
     def gatherData(self):
-        socks = zmq.select(self.subsSocks, [], [], 0.001)[0]
+        socks = zmq.select(self.subsSocks, [], [], timeout=0.001)
         if len(socks)>0:
             for sock in socks:
-                ret = sock.recv_multipart()
+                if len(sock) == 0:
+                    continue
+                ret = sock[0].recv_multipart()
                 #topic,data=ret[0],pickle.loads(ret[1])
                 topic = ret[0]
                 if topic in self.mpsDict.keys():
@@ -549,15 +552,19 @@ class System_Manager():
                 if topic == zmqTopics.topicMavlinkAttitude:                           # mavlink ATTITUDE
                     time_boot_ms = data['time_boot_ms']        # Flight controller time
                     ts = data['local-ts']
-                    rollspeed  = data['rollspeed']
-                    pitchspeed = data['pitchspeed']
-                    yawspeed   = data['yawspeed']
-                    roll       = data['roll']
-                    pitch      = data['pitch']
-                    yaw        = data['yaw']
+                    roll       = np.deg2rad(data['roll'])
+                    pitch      = np.deg2rad(data['pitch'])
+                    yaw        = np.deg2rad(data['yaw'])
                     self.currentData.rpy2 = np.array([roll, pitch, yaw])
-                    self.currentData.rpy2_rates = np.array([rollspeed, pitchspeed, yawspeed])
                     self.currentData.gathered['euler_ned_bodyfrd']=True
+                    
+                elif topic == zmqTopics.topicMavlinkAttitudeRate:                           # mavlink ATTITUDE
+                    time_boot_ms = data['time_boot_ms']        # Flight controller time
+                    ts = data['local-ts']
+                    rollspeed  = np.deg2rad(data['rollspeed'])
+                    pitchspeed = np.deg2rad(data['pitchspeed'])
+                    yawspeed   = np.deg2rad(data['yawspeed'])
+                    self.currentData.rpy2_rates = np.array([rollspeed, pitchspeed, yawspeed])
                     
                 elif topic == zmqTopics.topicMavlinkHighresIMU:                              # mavlink HIGHRES_IMU
                 # Flight controller time
@@ -601,9 +608,7 @@ class System_Manager():
                     x = data['q2']
                     y = data['q3']
                     z = data['q4']
-                    rollrate  = data['rollspeed']   # rad/s
-                    pitchrate = data['pitchspeed']  # rad/s
-                    yawrate   = data['yawspeed']    # rad/s
+
                     self.currentData.quat_ned_bodyfrd.set(x=x, y=y,z=z,w=w,timestamp=ts) 
                     self.currentData.rpy_rates = np.array([rollrate, pitchrate, yawrate])
                     self.currentData.gathered['quat_ned_bodyfrd']=True
@@ -622,10 +627,6 @@ class System_Manager():
                     lon = data['lon']   # deg
                     alt = data['alt']   # m
                     relative_alt = data['relative_alt']
-                    vx = data['vx']   # m/s
-                    vy = data['vy']
-                    vz = data['vz']
-                    heading_deg = data['hdg']
                     self.currentData.filt_pos_lla_deg = LLA(timestamp=ts, lla=[lat, lon, alt])
                     
                 elif topic == zmqTopics.topicMavlinkDistanceSensor:   
