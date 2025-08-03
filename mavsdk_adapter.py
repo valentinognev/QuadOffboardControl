@@ -50,6 +50,7 @@ RELEVANT_MAVLINK_MESSAGES = ['ALTITUDE',
                              'DISTANCE_SENSOR', 
                              'OPTICAL_FLOW']
 
+
 pubTopicsList = [
                [zmqTopics.topicMavlinkAltitude,         zmqTopics.topicMavlinkPort],
                [zmqTopics.topicMavlinkAttitude,         zmqTopics.topicMavlinkPort],
@@ -126,13 +127,13 @@ class Hardware_Adapter():
                  asyncio.ensure_future(self.positionned(drone)),
                  asyncio.ensure_future(self.globalpositionint(drone)),
                  asyncio.ensure_future(self.altitudem(drone)),
-                 asyncio.ensure_future(self.listenerToCommands(drone)),
                  asyncio.ensure_future(self.status_text(drone)),
                  asyncio.ensure_future(self.velocity_ned(drone)),
                  asyncio.ensure_future(self.scaled_imu(drone)),
                  asyncio.ensure_future(self.scaled_pressure(drone)),
                  asyncio.ensure_future(self.rc_status(drone)),
                  asyncio.ensure_future(self.raw_imu(drone)),
+                 asyncio.ensure_future(self.listenerToCommands(drone)),
                  ]
 
         await asyncio.gather(*tasks)
@@ -140,7 +141,7 @@ class Hardware_Adapter():
     async def attitude(self, drone):
         async for attitude in drone.telemetry.attitude_euler():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['time_boot_ms'] = attitude.timestamp_us/1000.0
             data['roll'] = attitude.roll_deg
             data['pitch'] = attitude.pitch_deg
@@ -151,7 +152,7 @@ class Hardware_Adapter():
     async def attitudeRate(self, drone):
         async for attitudeRate in drone.telemetry.attitude_angular_velocity():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['time_boot_ms'] = attitudeRate.timestamp_us/1000.0
             data['roll'] = attitudeRate.roll_deg
             data['pitch'] = attitudeRate.pitch_deg
@@ -163,7 +164,7 @@ class Hardware_Adapter():
     async def highresimu(self, drone):
         async for imu in drone.telemetry.imu():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['time_boot_ms'] = imu.timestamp_us/1000.0
             data['xacc'] = imu.acceleration_frd.forward_m_s2
             data['yacc'] = imu.acceleration_frd.right_m_s2
@@ -181,7 +182,7 @@ class Hardware_Adapter():
     async def attitudequat(self, drone):
         async for attitudequat in drone.telemetry.attitude_quaternion():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['time_boot_ms'] = attitudequat.timestamp_us/1000.0
             data['q1'] = attitudequat.w
             data['q2'] = attitudequat.x
@@ -193,7 +194,7 @@ class Hardware_Adapter():
     async def odometry(self, drone):
         async for odometry in drone.telemetry.odometry():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['roll_rad_s'] = odometry.angular_velocity_body.roll_rad_s
             data['pitch_rad_s'] = odometry.angular_velocity_body.pitch_rad_s
             data['yaw_rad_s'] = odometry.angular_velocity_body.yaw_rad_s           
@@ -218,7 +219,7 @@ class Hardware_Adapter():
     async def positionned(self, drone):
         async for positionned in drone.telemetry.position_velocity_ned():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['north_m'] = positionned.position.north_m
             data['east_m'] = positionned.position.east_m
             data['down_m'] = positionned.position.down_m
@@ -230,7 +231,7 @@ class Hardware_Adapter():
     async def globalpositionint(self, drone):
         async for positionlla in drone.telemetry.position():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['lat'] = positionlla.latitude_deg
             data['lon'] = positionlla.longitude_deg
             data['alt'] = positionlla.absolute_altitude_m
@@ -240,7 +241,7 @@ class Hardware_Adapter():
     async def altitudem(self, drone):
         async for altitudem in drone.telemetry.altitude():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['amsl_m'] = altitudem.altitude_amsl_m
             data['local_m'] = altitudem.altitude_local_m
             data['monotonic_m'] = altitudem.altitude_monotonic_m
@@ -253,13 +254,14 @@ class Hardware_Adapter():
     async def status_text(self, drone):
         async for status_text in drone.telemetry.status_text():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['text'] = status_text.text
+            data['type'] = status_text.type.name
      
     async def velocity_ned(self, drone):
         async for velocity_ned in drone.telemetry.velocity_ned():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['vx_m_s'] = velocity_ned.north_m_s
             data['vy_m_s'] = velocity_ned.east_m_s
             data['vz_m_s'] = velocity_ned.down_m_s
@@ -267,7 +269,7 @@ class Hardware_Adapter():
     async def scaled_imu(self, drone):
         async for scaled_imu in drone.telemetry.scaled_imu():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['xacc'] = scaled_imu.acceleration_frd.forward_m_s2
             data['yacc'] = scaled_imu.acceleration_frd.right_m_s2
             data['zacc'] = scaled_imu.acceleration_frd.down_m_s2
@@ -275,7 +277,7 @@ class Hardware_Adapter():
     async def scaled_pressure(self, drone):
         async for scaled_pressure in drone.telemetry.scaled_pressure():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['time_boot_ms'] = scaled_pressure.timestamp_us/1000.0
             data['absolute_press_hpa'] = scaled_pressure.absolute_pressure_hpa
             data['diff_press_hpa'] = scaled_pressure.differential_pressure_hpa
@@ -291,7 +293,7 @@ class Hardware_Adapter():
     async def raw_imu(self, drone):
         async for raw_imu in drone.telemetry.raw_imu():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['xacc'] = raw_imu.acceleration_frd.forward_m_s2
             data['yacc'] = raw_imu.acceleration_frd.right_m_s2
             data['zacc'] = raw_imu.acceleration_frd.down_m_s2
@@ -299,7 +301,7 @@ class Hardware_Adapter():
     async def raw_gps(self, drone):
         async for raw_gps in drone.telemetry.raw_gps():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['lat'] = raw_gps.latitude_deg
             data['lon'] = raw_gps.longitude_deg
             data['alt'] = raw_gps.altitude_m
@@ -307,13 +309,13 @@ class Hardware_Adapter():
     async def heading(self, drone):
         async for heading in drone.telemetry.heading():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['heading_deg'] = heading.heading_deg
             
     async def health(self, drone):
         async for health in drone.telemetry.health():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['is_gyrometer_calibration_ok'] = health.is_gyrometer_calibration_ok
             data['is_accelerometer_calibration_ok'] = health.is_accelerometer_calibration_ok
             data['is_magnetometer_calibration_ok'] = health.is_magnetometer_calibration_ok
@@ -321,13 +323,13 @@ class Hardware_Adapter():
     async def flight_mode(self, drone):
         async for flight_mode in drone.telemetry.flight_mode():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['flight_mode'] = flight_mode.flight_mode
             
     async def ground_truth(self, drone):
         async for ground_truth in drone.telemetry.ground_truth():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['lat'] = ground_truth.latitude_deg
             data['lon'] = ground_truth.longitude_deg
             data['alt'] = ground_truth.altitude_m
@@ -335,13 +337,13 @@ class Hardware_Adapter():
     async def in_air(self, drone):
         async for in_air in drone.telemetry.in_air():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['in_air'] = in_air.in_air
             
     async def landing_state(self, drone):
         async for landing_state in drone.telemetry.landing_state():
             data = {}
-            data['ts'] = time.time()
+            data['local-ts'] = time.time()
             data['landing_state'] = landing_state.landing_state
             
 ################################################################################################################
@@ -350,7 +352,8 @@ class Hardware_Adapter():
             ret = zmq.select([subSock], [], [], timeout=0.001)
             # ret = ret[0]
             if ret[0] is None or len(ret[0]) == 0:
-                return
+                await asyncio.sleep(0.001)
+                continue
             data = subSock.recv_multipart()
             topic = data[0]
             data = pickle.loads(data[1])
