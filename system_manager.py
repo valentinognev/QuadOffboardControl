@@ -11,7 +11,11 @@ import os
 import pymap3d
 # import cv2
 import sys
-import zmq
+
+from mavsdk import System
+from mavsdk.offboard import (Attitude, AttitudeRate, OffboardError, VelocityNedYaw, VelocityBodyYawspeed)
+import asyncio
+
 # from Filter.AllInOneKalman import AllInOneKalman
 # from virtual_tracker import Tracker
 

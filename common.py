@@ -268,26 +268,50 @@ class Imu():
 #################################################################################################################
 class Flight_Data():
     def __init__(self):
+        self.quat_ts = 0
         self.quat_ned_bodyfrd = Quaternion(0,0,0,1)
         self.altitude_m = Altitude(0,0)
         self.is_armed = False
         self.mode = FLIGHT_MODE.UNKNOWN    
-        self.imu_ts = 0 
-        self.imu_ned = Imu(0,np.zeros(3),np.zeros(3)) 
+        self.imu_ts = 0                          # imu timestamp in milliseconds
+        self.imu_raw_frd = Imu(0,np.zeros(3),np.zeros(3))  # imu - acceleration and gyro in m/s^2 and rad/s
+        self.imu_ned = Imu(0,np.zeros(3),np.zeros(3))  # imu - acceleration and gyro in m/s^2 and rad/s
         self.pos_ned_m = NED()            # ned - east north up
-        self.raw_pos_lla_deg = LLA(0,np.zeros(3))   # lla - lat lon altitude
-        self.filt_pos_lla_deg = LLA(0,np.zeros(3))   # lla - lat lon altitude
-        self.rpy_rates = np.zeros(3)
-        self.current_thrust = 0
-        self.rpy2 = np.zeros(3)
-        self.rpy2_rates = np.zeros(3)
-        self.custom_mode_id = None
-        self.custom_mode_name = None
-        self.throttle = 0
-        self.heading = 0   # angle in from north
-        self.groundspeed = 0
-        self.offboardMode = False
-        
+        self.raw_pos_lla_deg = LLA(0,np.zeros(3))   # lla - lat lon altitude in degrees and meters
+        self.filt_pos_lla_deg = LLA(0,np.zeros(3))   # lla - lat lon altitude in degrees and meters
+        self.rpy_rates = np.zeros(3)                # roll, pitch, yaw rates in radians/s
+        self.current_thrust = 0                      # current thrust in percentage
+        self.rpy = np.zeros(3)           # roll, pitch, yaw in radians
+        self.rpy2_rates = np.zeros(3)                # roll, pitch, yaw rates in radians/s
+        self.custom_mode_id = None                  # custom mode id
+        self.custom_mode_name = None                # custom mode name
+        self.throttle = 0                           # throttle in percentage
+        self.heading = 0                             # angle in from north in radians
+        self.groundspeed = 0                         # ground speed in m/s
+        self.offboardMode = False                    # offboard mode
+        self.timestamp = 0               # timestamp in milliseconds
+        self.local_ts = 0                # local timestamp in milliseconds
+        self.temperature = 0             # temperature in degC
+        self.amsl_m = 0                  # altitude above mean sea level in meters
+        self.local_m = 0                 # altitude above local level in meters
+        self.monotonic_m = 0             # altitude above takeoff in meters
+        self.relative_m = 0              # altitude above home in meters
+        self.terrain_m = 0               # altitude above terrain in meters
+        self.bottom_clearance_m = 0      # clearance below the vehicle in meters
+        self.status_text = None          # status text
+        self.pressure = 0                # pressure in hPa
+        self.temperature = 0             # temperature in degC
+        self.absolute_press_hpa = 0      # absolute pressure in hPa
+        self.differential_press_hpa = 0  # differential pressure in hPa
+        self.is_available = False       # rc status is available
+        self.signal_strength_percent = 0 # rc status signal strength in percentage
+        self.was_available_once = False  # rc status was available once
+        self.is_gyrometer_calibration_ok = False # gyrometer calibration is ok
+        self.is_accelerometer_calibration_ok = False # accelerometer calibration is ok
+        self.is_magnetometer_calibration_ok = False # magnetometer calibration is ok
+        self.flight_mode = None # flight mode
+        self.in_air = False # in air
+        self.landing_state = None # landing state
         self.gathered={
             'euler_ned_bodyfrd':False,
             'quat_ned_bodyfrd':False,

@@ -21,7 +21,7 @@ from mavsdk import System
 from mavsdk.offboard import (Attitude, AttitudeRate, OffboardError, VelocityNedYaw, VelocityBodyYawspeed)
 import asyncio
 
-
+from common import Flight_Data
 # from config_parser import Config_Parser
 import os
 #sudo nano /home/user/.local/bin/mavproxy.py
@@ -35,37 +35,8 @@ ARM_LOOP_DELAY = 0.02
 MAX_VERTICAL_VEL_JUMP_M_S = 3
 USE_MAVLINK = True
 DEVICE_STR_LIST = ["CubeBlack", "CubeOrange"]
-RELEVANT_MAVLINK_MESSAGES = ['ALTITUDE', 
-                             'ATTITUDE', 
-                             'HIGHRES_IMU', 
-                             'ATTITUDE_QUATERNION', 
-                             'LOCAL_POSITION_NED', 
-                             'GLOBAL_POSITION_INT', 
-                             'ODOMETRY',
-                             'VELOCITY_NED',
-                             'ATTITUDE_TARGET', 
-                             'CURRENT_MODE', 
-                             'HEARTBEAT', 
-                             'VFR_HUD', 
-                             'DISTANCE_SENSOR', 
-                             'OPTICAL_FLOW']
-
-
 pubTopicsList = [
-               [zmqTopics.topicMavlinkAltitude,         zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitude,         zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkHighresIMU,       zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitudeQuat,     zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkLocalPositionNed, zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkGlobalPositionInt,zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkOdometry,         zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkVelocityNed,      zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitudeTarget,   zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkCurrentMode,      zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkHeartbeat,        zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkVFR_HUD,          zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkDistanceSensor,   zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkOpticalFlow,      zmqTopics.topicMavlinkPort],
+               [zmqTopics.topicMavlinkFlightData,         zmqTopics.topicMavlinkPort],
             ]
 
 mpsDict = {}
@@ -75,20 +46,21 @@ sockPub = zmqWrapper.publisher(zmqTopics.topicMavlinkPort) #TODO: change to pubT
 for topic in pubTopicsList:
     mpsDict[topic[0]] = mps.MPS(topic[0])
 
-subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
+subsList = [zmqTopics.topicGuidenceCmdAttitude, 
                                 zmqTopics.topicGuidenceCmdVelNedYaw,
                                 zmqTopics.topicGuidenceCmdVelBodyYawRate,
                                 zmqTopics.topicGuidenceCmdTakeoff,
                                 zmqTopics.topicGuidenceCmdLand,
                                 zmqTopics.topicGuidanceCmdArm,
-                                ], zmqTopics.topicGuidenceCmdPort)
+                                ]
+subsPort = zmqTopics.topicGuidenceCmdPort
 
 
 #################################################################################################################
 #################################################################################################################
 #################################################################################################################
-class Hardware_Adapter():
-    def __init__(self, log_dir):
+class MAVSDK_Adapter():
+    def __init__(self, log_dir, publishFrequency=100):
         self._log_dir = log_dir
         self._prev_alt_m = None
         self._alt_vel_count = 0
@@ -96,22 +68,11 @@ class Hardware_Adapter():
         self._prev_alt_ts = time.time()
         self._vertical_speed_filter = Low_Pass_Filter(alpha=0.1, is_angle=False)
         self._altitude_filter = Low_Pass_Filter(alpha=0.3, is_angle=False) # was 0.3
-        # system_config_parser = Config_Parser(path=os.path.join(config_dir, "system_config.json"))
-        # vehicle_config_file_name = system_config_parser.get_value("vehicle_config_file", default_value="")
-        # vehicle_data_parser = None
-        # if(vehicle_config_file_name is not None):
-        #     vehicle_data_parser = Config_Parser(path=os.path.join(config_dir,"vehicle", vehicle_config_file_name), save_copy=False)
-        # if(vehicle_data_parser is None):
-        #     print("config init failed in hardware adapter") 
-        # self._connection_string = vehicle_data_parser.get_value("mavlink/connection_string", "")
-        # self._baud_rate = float(vehicle_data_parser.get_value("mavlink/baud_rate", -1))
-        # self._disable_offboard_control = vehicle_data_parser.get_value("control/disable_offboard_control", True)
-        # if(self._disable_offboard_control):
-        #     print("offboard control disabled")
-
+        
+        self._publishDT = 1.0/publishFrequency
+        self.flight_data = {}
         self._mavlink_parser = Mavlink_Parser()
         self._current_airspeed = 0
-        self._mavlink_logger = Logger("mavlink", log_dir=self._log_dir, save_log_to_file=True, print_logs_to_console=False, datatype="TXT")
 
         self._offboard_control_enabled = False
 
@@ -119,242 +80,273 @@ class Hardware_Adapter():
     async def run(self):
         # Start the tasks
         drone = System()
+        lock = asyncio.Lock()
         await drone.connect(system_address='udp://:14540')
-        tasks = [asyncio.ensure_future(self.attitude(drone)),
-                 asyncio.ensure_future(self.highresimu(drone)),   #TODO: add highresimu to mavsdk
-                 asyncio.ensure_future(self.attitudequat(drone)),
-                 asyncio.ensure_future(self.odometry(drone)),
-                 asyncio.ensure_future(self.positionned(drone)),
-                 asyncio.ensure_future(self.globalpositionint(drone)),
-                 asyncio.ensure_future(self.altitudem(drone)),
-                 asyncio.ensure_future(self.status_text(drone)),
-                 asyncio.ensure_future(self.velocity_ned(drone)),
-                 asyncio.ensure_future(self.scaled_imu(drone)),
-                 asyncio.ensure_future(self.scaled_pressure(drone)),
-                 asyncio.ensure_future(self.rc_status(drone)),
-                 asyncio.ensure_future(self.raw_imu(drone)),
+        tasks = [asyncio.ensure_future(self.attitude(drone, lock)),
+                 asyncio.ensure_future(self.highresimu(drone, lock)),   #TODO: add highresimu to mavsdk
+                 asyncio.ensure_future(self.attitudequat(drone, lock)),
+                 asyncio.ensure_future(self.odometry(drone, lock)),
+                 asyncio.ensure_future(self.positionned(drone, lock)),
+                 asyncio.ensure_future(self.globalpositionint(drone, lock)),
+                 asyncio.ensure_future(self.altitudem(drone, lock)),
+                 asyncio.ensure_future(self.status_text(drone, lock)),
+                 asyncio.ensure_future(self.velocity_ned(drone, lock)),
+                 asyncio.ensure_future(self.scaled_imu(drone, lock)),
+                 asyncio.ensure_future(self.scaled_pressure(drone, lock)),
+                 asyncio.ensure_future(self.rc_status(drone, lock)),
+                 asyncio.ensure_future(self.raw_imu(drone, lock)),
                  asyncio.ensure_future(self.listenerToCommands(drone)),
+                 asyncio.ensure_future(self.publish_data(drone, lock)),
                  ]
 
         await asyncio.gather(*tasks)
 
-    async def attitude(self, drone):
+    async def attitude(self, drone, lock):
         async for attitude in drone.telemetry.attitude_euler():
-            data = {}
-            data['local-ts'] = time.time()
-            data['time_boot_ms'] = attitude.timestamp_us/1000.0
-            data['roll'] = attitude.roll_deg
-            data['pitch'] = attitude.pitch_deg
-            data['yaw'] = attitude.yaw_deg
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['attitude_timestamp'] = attitude.timestamp_us/1000.0
+                self.flight_data['roll_deg'] = attitude.roll_deg
+                self.flight_data['pitch_deg'] = attitude.pitch_deg
+                self.flight_data['yaw_deg'] = attitude.yaw_deg
 
-            sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
+            # sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
     
-    async def attitudeRate(self, drone):
+    async def attitudeRate(self, drone, lock):
         async for attitudeRate in drone.telemetry.attitude_angular_velocity():
-            data = {}
-            data['local-ts'] = time.time()
-            data['time_boot_ms'] = attitudeRate.timestamp_us/1000.0
-            data['roll'] = attitudeRate.roll_deg
-            data['pitch'] = attitudeRate.pitch_deg
-            data['yaw'] = attitudeRate.yaw_deg
-            data['thrust'] = attitudeRate.thrust_percentage
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['attitude_timestamp'] = attitudeRate.timestamp_us/1000.0
+                self.flight_data['roll_deg_rate'] = attitudeRate.roll_deg
+                self.flight_data['pitch_deg_rate'] = attitudeRate.pitch_deg
+                self.flight_data['yaw_deg_rate'] = attitudeRate.yaw_deg
+                self.flight_data['throttle'] = attitudeRate.thrust_percentage
 
-            sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
+            # sockPub.send_multipart([zmqTopics.topicMavlinkAttitude, pickle.dumps(data)])
 
-    async def highresimu(self, drone):
+    async def highresimu(self, drone, lock):
         async for imu in drone.telemetry.imu():
-            data = {}
-            data['local-ts'] = time.time()
-            data['time_boot_ms'] = imu.timestamp_us/1000.0
-            data['xacc'] = imu.acceleration_frd.forward_m_s2
-            data['yacc'] = imu.acceleration_frd.right_m_s2
-            data['zacc'] = imu.acceleration_frd.down_m_s2
-            data['xgyro'] = imu.angular_velocity_frd.forward_rad_s
-            data['ygyro'] = imu.angular_velocity_frd.right_rad_s
-            data['zgyro'] = imu.angular_velocity_frd.down_rad_s
-            data['xmag'] = imu.magnetic_field_frd.forward_gauss
-            data['ymag'] = imu.magnetic_field_frd.right_gauss
-            data['zmag'] = imu.magnetic_field_frd.down_gauss
-            data['temperature'] = imu.temperature_degc
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['imu_ts'] = imu.timestamp_us/1000.0
+                self.flight_data['accl_frd_forward_m_s2'] = imu.acceleration_frd.forward_m_s2
+                self.flight_data['accl_frd_right_m_s2'] = imu.acceleration_frd.right_m_s2
+                self.flight_data['accl_frd_down_m_s2'] = imu.acceleration_frd.down_m_s2
+                self.flight_data['gyro_frd_forward_rad_s'] = imu.angular_velocity_frd.forward_rad_s
+                self.flight_data['gyro_frd_right_rad_s'] = imu.angular_velocity_frd.right_rad_s
+                self.flight_data['gyro_frd_down_rad_s'] = imu.angular_velocity_frd.down_rad_s
+                self.flight_data['mag_frd_forward_gauss'] = imu.magnetic_field_frd.forward_gauss
+                self.flight_data['mag_frd_right_gauss'] = imu.magnetic_field_frd.right_gauss
+                self.flight_data['mag_frd_down_gauss'] = imu.magnetic_field_frd.down_gauss
+                self.flight_data['temperature_degc'] = imu.temperature_degc
             
-            sockPub.send_multipart([zmqTopics.topicMavlinkHighresIMU, pickle.dumps(data)])
+            # sockPub.send_multipart([zmqTopics.topicMavlinkHighresIMU, pickle.dumps(data)])
 
-    async def attitudequat(self, drone):
+    async def attitudequat(self, drone, lock):
         async for attitudequat in drone.telemetry.attitude_quaternion():
-            data = {}
-            data['local-ts'] = time.time()
-            data['time_boot_ms'] = attitudequat.timestamp_us/1000.0
-            data['q1'] = attitudequat.w
-            data['q2'] = attitudequat.x
-            data['q3'] = attitudequat.y
-            data['q4'] = attitudequat.z
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['quat_ts'] = attitudequat.timestamp_us/1000.0
+                self.flight_data['quat_w'] = attitudequat.w
+                self.flight_data['quat_x'] = attitudequat.x
+                self.flight_data['quat_y'] = attitudequat.y
+                self.flight_data['quat_z'] = attitudequat.z
 
-            sockPub.send_multipart([zmqTopics.topicMavlinkAttitudeQuat, pickle.dumps(data)])
+            # sockPub.send_multipart([zmqTopics.topicMavlinkAttitudeQuat, pickle.dumps(data)])
 
-    async def odometry(self, drone):
+    async def odometry(self, drone, lock):
         async for odometry in drone.telemetry.odometry():
-            data = {}
-            data['local-ts'] = time.time()
-            data['roll_rad_s'] = odometry.angular_velocity_body.roll_rad_s
-            data['pitch_rad_s'] = odometry.angular_velocity_body.pitch_rad_s
-            data['yaw_rad_s'] = odometry.angular_velocity_body.yaw_rad_s           
-            # data['pose_cov_mat'] = odometry.pose_covariance.covariance_matrix            
-            data['x_m'] = odometry.position_body.x_m
-            data['y_m'] = odometry.position_body.y_m
-            data['z_m'] = odometry.position_body.z_m
-            data['q1'] = odometry.q.w
-            data['q2'] = odometry.q.x
-            data['q3'] = odometry.q.y
-            data['q4'] = odometry.q.z
-            data['time_boot_ms'] = odometry.time_usec/1000.0
-            data['vel_body_x_m_s'] = odometry.velocity_body.x_m_s
-            data['vel_body_y_m_s'] = odometry.velocity_body.y_m_s
-            data['vel_body_z_m_s'] = odometry.velocity_body.z_m_s
-            # data['velocity_covariance'] = odometry.velocity_covariance.covariance_matrix
-            data['frame_id'] = odometry.frame_id.name
-            data['child_frame_id'] = odometry.child_frame_id.name
-            
-            sockPub.send_multipart([zmqTopics.topicMavlinkOdometry, pickle.dumps(data)])
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['timestamp'] = odometry.time_usec/1000.0
+                self.flight_data['angle_rate_body_roll_rad_s'] = odometry.angular_velocity_body.roll_rad_s
+                self.flight_data['angle_rate_body_pitch_rad_s'] = odometry.angular_velocity_body.pitch_rad_s
+                self.flight_data['angle_rate_body_yaw_rad_s'] = odometry.angular_velocity_body.yaw_rad_s           
+                # data['pose_cov_mat'] = odometry.pose_covariance.covariance_matrix            
+                self.flight_data['pos_body_x_m'] = odometry.position_body.x_m
+                self.flight_data['pos_body_y_m'] = odometry.position_body.y_m
+                self.flight_data['pos_body_z_m'] = odometry.position_body.z_m
+                self.flight_data['quat_w'] = odometry.q.w
+                self.flight_data['quat_x'] = odometry.q.x
+                self.flight_data['quat_y'] = odometry.q.y
+                self.flight_data['quat_z'] = odometry.q.z
+                self.flight_data['quat_ts'] = self.flight_data['timestamp']
 
-    async def positionned(self, drone):
+                self.flight_data['vel_body_x_m_s'] = odometry.velocity_body.x_m_s
+                self.flight_data['vel_body_y_m_s'] = odometry.velocity_body.y_m_s
+                self.flight_data['vel_body_z_m_s'] = odometry.velocity_body.z_m_s
+
+                self.flight_data['quat_ts'] = self.flight_data['timestamp']
+                # data['velocity_covariance'] = odometry.velocity_covariance.covariance_matrix
+                self.flight_data['frame_id'] = odometry.frame_id.name
+                self.flight_data['child_frame_id'] = odometry.child_frame_id.name
+            
+            # sockPub.send_multipart([zmqTopics.topicMavlinkOdometry, pickle.dumps(data)])
+
+    async def positionned(self, drone, lock):
         async for positionned in drone.telemetry.position_velocity_ned():
-            data = {}
-            data['local-ts'] = time.time()
-            data['north_m'] = positionned.position.north_m
-            data['east_m'] = positionned.position.east_m
-            data['down_m'] = positionned.position.down_m
-            data['vx_m_s'] = positionned.velocity.north_m_s
-            data['vy_m_s'] = positionned.velocity.east_m_s
-            data['vz_m_s'] = positionned.velocity.down_m_s
-            sockPub.send_multipart([zmqTopics.topicMavlinkLocalPositionNed, pickle.dumps(data)])
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['pos_north_m'] = positionned.position.north_m
+                self.flight_data['pos_east_m'] = positionned.position.east_m
+                self.flight_data['pos_down_m'] = positionned.position.down_m
+                self.flight_data['vel_north_m_s'] = positionned.velocity.north_m_s
+                self.flight_data['vel_east_m_s'] = positionned.velocity.east_m_s
+                self.flight_data['vel_down_m_s'] = positionned.velocity.down_m_s
+                # sockPub.send_multipart([zmqTopics.topicMavlinkLocalPositionNed, pickle.dumps(data)])
 
-    async def globalpositionint(self, drone):
+    async def globalpositionint(self, drone, lock):
         async for positionlla in drone.telemetry.position():
-            data = {}
-            data['local-ts'] = time.time()
-            data['lat'] = positionlla.latitude_deg
-            data['lon'] = positionlla.longitude_deg
-            data['alt'] = positionlla.absolute_altitude_m
-            data['relative_alt'] = positionlla.relative_altitude_m
-            sockPub.send_multipart([zmqTopics.topicMavlinkGlobalPositionInt, pickle.dumps(data)])
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['global_lat_deg'] = positionlla.latitude_deg
+                self.flight_data['global_lon_deg'] = positionlla.longitude_deg
+                self.flight_data['global_alt_m'] = positionlla.absolute_altitude_m
+                self.flight_data['global_relative_alt_m'] = positionlla.relative_altitude_m
+            # sockPub.send_multipart([zmqTopics.topicMavlinkGlobalPositionInt, pickle.dumps(data)])
 
-    async def altitudem(self, drone):
+    async def altitudem(self, drone, lock):
         async for altitudem in drone.telemetry.altitude():
-            data = {}
-            data['local-ts'] = time.time()
-            data['amsl_m'] = altitudem.altitude_amsl_m
-            data['local_m'] = altitudem.altitude_local_m
-            data['monotonic_m'] = altitudem.altitude_monotonic_m
-            data['relative_m'] = altitudem.altitude_relative_m
-            data['terrain_m'] = altitudem.altitude_terrain_m
-            data['bottom_clearance_m'] = altitudem.bottom_clearance_m
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['altitude_m_amsl'] = altitudem.altitude_amsl_m
+                self.flight_data['altitude_m_local'] = altitudem.altitude_local_m
+                self.flight_data['altitude_m_monotonic'] = altitudem.altitude_monotonic_m
+                self.flight_data['altitude_m_relative'] = altitudem.altitude_relative_m
+                self.flight_data['altitude_m_terrain'] = altitudem.altitude_terrain_m
+                self.flight_data['altitude_m_bottom_clearance'] = altitudem.bottom_clearance_m
 
-            sockPub.send_multipart([zmqTopics.topicMavlinkAltitude, pickle.dumps(data)])
+            # sockPub.send_multipart([zmqTopics.topicMavlinkAltitude, pickle.dumps(data)])
                         
-    async def status_text(self, drone):
+    async def status_text(self, drone, lock):
         async for status_text in drone.telemetry.status_text():
-            data = {}
-            data['local-ts'] = time.time()
-            data['text'] = status_text.text
-            data['type'] = status_text.type.name
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['status_text'] = status_text.text
      
-    async def velocity_ned(self, drone):
+    async def velocity_ned(self, drone, lock):
         async for velocity_ned in drone.telemetry.velocity_ned():
-            data = {}
-            data['local-ts'] = time.time()
-            data['vx_m_s'] = velocity_ned.north_m_s
-            data['vy_m_s'] = velocity_ned.east_m_s
-            data['vz_m_s'] = velocity_ned.down_m_s
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['vel_north_m_s'] = velocity_ned.north_m_s
+                self.flight_data['vel_east_m_s'] = velocity_ned.east_m_s
+                self.flight_data['vel_down_m_s'] = velocity_ned.down_m_s
+                # sockPub.send_multipart([zmqTopics.topicMavlinkLocalPositionNed, pickle.dumps(data)])
 
-    async def scaled_imu(self, drone):
+    async def scaled_imu(self, drone, lock):
         async for scaled_imu in drone.telemetry.scaled_imu():
-            data = {}
-            data['local-ts'] = time.time()
-            data['xacc'] = scaled_imu.acceleration_frd.forward_m_s2
-            data['yacc'] = scaled_imu.acceleration_frd.right_m_s2
-            data['zacc'] = scaled_imu.acceleration_frd.down_m_s2
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['imu_ts'] = scaled_imu.timestamp_us/1000.0
+                self.flight_data['imu_ned_accel_x_m_s2'] = scaled_imu.acceleration_frd.forward_m_s2
+                self.flight_data['imu_ned_accel_y_m_s2'] = scaled_imu.acceleration_frd.right_m_s2
+                self.flight_data['imu_ned_accel_z_m_s2'] = scaled_imu.acceleration_frd.down_m_s2
             
-    async def scaled_pressure(self, drone):
+    async def scaled_pressure(self, drone, lock):
         async for scaled_pressure in drone.telemetry.scaled_pressure():
-            data = {}
-            data['local-ts'] = time.time()
-            data['time_boot_ms'] = scaled_pressure.timestamp_us/1000.0
-            data['absolute_press_hpa'] = scaled_pressure.absolute_pressure_hpa
-            data['diff_press_hpa'] = scaled_pressure.differential_pressure_hpa
-            data['temperature_deg'] = scaled_pressure.temperature_deg
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['timestamp'] = scaled_pressure.timestamp_us/1000.0
+                self.flight_data['absolute_press_hpa'] = scaled_pressure.absolute_pressure_hpa
+                self.flight_data['differential_press_hpa'] = scaled_pressure.differential_pressure_hpa
+                self.flight_data['temperature_degc'] = scaled_pressure.temperature_deg
+                self.flight_data['differential_press_temperature_deg'] = scaled_pressure.differential_pressure_temperature_deg
 
-    async def rc_status(self, drone):
+    async def rc_status(self, drone, lock):
         async for rc_status in drone.telemetry.rc_status():
-            data = {}
-            data['is_available'] = rc_status.is_available
-            data['signal_strength_percent'] = rc_status.signal_strength_percent
-            data['was_available_once'] = rc_status.was_available_once
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['is_available'] = rc_status.is_available
+                self.flight_data['signal_strength_percent'] = rc_status.signal_strength_percent
+                self.flight_data['was_available_once'] = rc_status.was_available_once
 
-    async def raw_imu(self, drone):
+    async def raw_imu(self, drone, lock):
         async for raw_imu in drone.telemetry.raw_imu():
-            data = {}
-            data['local-ts'] = time.time()
-            data['xacc'] = raw_imu.acceleration_frd.forward_m_s2
-            data['yacc'] = raw_imu.acceleration_frd.right_m_s2
-            data['zacc'] = raw_imu.acceleration_frd.down_m_s2
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['imu_ts'] = raw_imu.timestamp_us/1000.0
+                self.flight_data['imu_raw_frd_accel_x_m_s2'] = raw_imu.acceleration_frd.forward_m_s2
+                self.flight_data['imu_raw_frd_accel_y_m_s2'] = raw_imu.acceleration_frd.right_m_s2
+                self.flight_data['imu_raw_frd_accel_z_m_s2'] = raw_imu.acceleration_frd.down_m_s2
+                self.flight_data['imu_raw_frd_gyro_x_rad_s'] = raw_imu.angular_velocity_frd.forward_rad_s
+                self.flight_data['imu_raw_frd_gyro_y_rad_s'] = raw_imu.angular_velocity_frd.right_rad_s
+                self.flight_data['imu_raw_frd_gyro_z_rad_s'] = raw_imu.angular_velocity_frd.down_rad_s
             
-    async def raw_gps(self, drone):
+    async def raw_gps(self, drone, lock):
         async for raw_gps in drone.telemetry.raw_gps():
-            data = {}
-            data['local-ts'] = time.time()
-            data['lat'] = raw_gps.latitude_deg
-            data['lon'] = raw_gps.longitude_deg
-            data['alt'] = raw_gps.altitude_m
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['timestamp'] = raw_gps.timestamp_us/1000.0
+                self.flight_data['raw_lat_deg'] = raw_gps.latitude_deg
+                self.flight_data['raw_lon_deg'] = raw_gps.longitude_deg
+                self.flight_data['raw_alt_m'] = raw_gps.altitude_m
             
-    async def heading(self, drone):
+    async def heading(self, drone, lock):
         async for heading in drone.telemetry.heading():
-            data = {}
-            data['local-ts'] = time.time()
-            data['heading_deg'] = heading.heading_deg
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['heading'] = heading.heading_deg
             
-    async def health(self, drone):
+    async def health(self, drone, lock):
         async for health in drone.telemetry.health():
-            data = {}
-            data['local-ts'] = time.time()
-            data['is_gyrometer_calibration_ok'] = health.is_gyrometer_calibration_ok
-            data['is_accelerometer_calibration_ok'] = health.is_accelerometer_calibration_ok
-            data['is_magnetometer_calibration_ok'] = health.is_magnetometer_calibration_ok
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['is_gyrometer_calibration_ok'] = health.is_gyrometer_calibration_ok
+                self.flight_data['is_accelerometer_calibration_ok'] = health.is_accelerometer_calibration_ok
+                self.flight_data['is_magnetometer_calibration_ok'] = health.is_magnetometer_calibration_ok
 
-    async def flight_mode(self, drone):
+    async def flight_mode(self, drone, lock):
         async for flight_mode in drone.telemetry.flight_mode():
-            data = {}
-            data['local-ts'] = time.time()
-            data['flight_mode'] = flight_mode.flight_mode
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['flight_mode'] = flight_mode.flight_mode
             
-    async def ground_truth(self, drone):
+    async def ground_truth(self, drone, lock):
         async for ground_truth in drone.telemetry.ground_truth():
-            data = {}
-            data['local-ts'] = time.time()
-            data['lat'] = ground_truth.latitude_deg
-            data['lon'] = ground_truth.longitude_deg
-            data['alt'] = ground_truth.altitude_m
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['raw_lat_deg'] = ground_truth.latitude_deg
+                self.flight_data['raw_lon_deg'] = ground_truth.longitude_deg
+                self.flight_data['raw_alt_m'] = ground_truth.altitude_m
     
-    async def in_air(self, drone):
+    async def in_air(self, drone, lock):
         async for in_air in drone.telemetry.in_air():
-            data = {}
-            data['local-ts'] = time.time()
-            data['in_air'] = in_air.in_air
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['in_air'] = in_air.in_air
             
-    async def landing_state(self, drone):
+    async def landing_state(self, drone, lock):
         async for landing_state in drone.telemetry.landing_state():
-            data = {}
-            data['local-ts'] = time.time()
-            data['landing_state'] = landing_state.landing_state
-            
+            async with lock:
+                self.flight_data['local_ts'] = time.time()
+                self.flight_data['landing_state'] = landing_state.landing_state
+    
+    async def publish_data(self, drone, lock):
+        while True:
+            async with lock:
+                sockPub.send_multipart([zmqTopics.topicMavlinkFlightData, pickle.dumps(self.flight_data)])
+                if 'timestamp' in self.flight_data.keys():
+                    print("self.flight_data['timestamp'] ", self.flight_data['timestamp'])
+            await asyncio.sleep(self._publishDT)
+
 ################################################################################################################
     async def listenerToCommands(self, drone):
         while True:
-            ret = zmq.select([subSock], [], [], timeout=0.001)
+            subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
+                                zmqTopics.topicGuidenceCmdVelNedYaw,
+                                zmqTopics.topicGuidenceCmdVelBodyYawRate,
+                                zmqTopics.topicGuidenceCmdTakeoff,
+                                zmqTopics.topicGuidenceCmdLand,
+                                zmqTopics.topicGuidanceCmdArm,
+                                ], zmqTopics.topicGuidenceCmdPort)
+            ret = zmq.select([subSock], [], [], timeout=0.01)
             # ret = ret[0]
             if ret[0] is None or len(ret[0]) == 0:
-                await asyncio.sleep(0.001)
+                subSock.close()
+                await asyncio.sleep(0.1)
                 continue
             data = subSock.recv_multipart()
+            subSock.close()
             topic = data[0]
             data = pickle.loads(data[1])
             
@@ -402,8 +394,7 @@ class Hardware_Adapter():
             # elif topic == zmqTopics.topicGuidanceCmdArm:
             #     msg = pickle.loads(data[1])
             #     self._arm()
-                    
-        
+         
 #################################################################################################################
 
     def _send_takeoff_cmd(self, takeoff_altitude = 10):
@@ -694,7 +685,8 @@ class Hardware_Adapter():
 
 
 if __name__ == '__main__':
-    asyncio.run(Hardware_Adapter("logs").run())
+    asyncio.run(MAVSDK_Adapter("logs").run())
+
 
     
 
