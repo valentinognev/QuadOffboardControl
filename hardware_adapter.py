@@ -128,7 +128,7 @@ class Hardware_Adapter():
             
         if msg_dict['mavpackettype'] in RELEVANT_MAVLINK_MESSAGES:
             ind = RELEVANT_MAVLINK_MESSAGES.index(msg_dict['mavpackettype'])
-            self.parse(msg_dict, self.flight_data)
+            self.parse(msg_dict)
         else:
             pass
             # print(str(msg_dict))
@@ -496,7 +496,7 @@ class Hardware_Adapter():
 
 #################################################################################################################
 
-    def parse(self, msg_dict, current_data:Flight_Data):
+    def parse(self, msg_dict):
         success = False
 
         key = msg_dict['mavpackettype']
@@ -518,11 +518,15 @@ class Hardware_Adapter():
             self._current_data.timestamp = msg_dict['time_boot_ms']
             self._current_data.quat_ned_bodyfrd = Quaternion(w=float(msg_dict['q1']), x=float(msg_dict['q2']), y=float(msg_dict['q3']), z=float(msg_dict['q4']))
             self._current_data.rpy_rates = np.array([float(msg_dict['rollspeed']), float(msg_dict['pitchspeed']), float(msg_dict['yawspeed'])])
+            self._current_data.gathered['quat_ned_bodyfrd'] = True
+            self._current_data.gathered['rpy_rates'] = True
         elif(key == 'ATTITUDE'):
             self._current_data.local_ts = time.time()
             self._current_data.timestamp = msg_dict['time_boot_ms']
             self._current_data.rpy = np.array([float(msg_dict['roll']), float(msg_dict['pitch']), float(msg_dict['yaw'])])
             self._current_data.rpy_rates = np.array([float(msg_dict['rollspeed']), float(msg_dict['pitchspeed']), float(msg_dict['yawspeed'])])
+            self._current_data.gathered['rpy'] = True
+            self._current_data.gathered['rpy_rates'] = True
         elif(key == 'ATTITUDE_TARGET'):
             pass
         elif(key == 'GLOBAL_POSITION_INT'):
@@ -532,6 +536,8 @@ class Hardware_Adapter():
             self._current_data.relative_m = msg_dict['relative_alt']/1000.0
             self._current_data.heading = np.deg2rad(msg_dict['hdg']/100.0)
             self._current_data.pos_ned_m.vel_ned = np.array([float(msg_dict['vx'])/100.0, float(msg_dict['vy'])/100.0, float(msg_dict['vz'])/100.0])
+            self._current_data.gathered['pos_ned_m'] = True
+            self._current_data.gathered['vel_ned_m'] = True
         elif(key == 'ALTITUDE'): # 10 HZ
             self._current_data.local_ts = time.time()
             self._current_data.timestamp = msg_dict['time_usec']/1000.0
@@ -541,6 +547,12 @@ class Hardware_Adapter():
             self._current_data.monotonic_m = float(msg_dict['altitude_monotonic'])
             self._current_data.terrain_m = float(msg_dict['altitude_terrain'])
             self._current_data.bottom_clearance_m = float(msg_dict['bottom_clearance'])
+            self._current_data.gathered['relative_m'] = True
+            self._current_data.gathered['amsl_m'] = True
+            self._current_data.gathered['local_m'] = True
+            self._current_data.gathered['monotonic_m'] = True
+            self._current_data.gathered['terrain_m'] = True
+            self._current_data.gathered['bottom_clearance_m'] = True
         elif(key == 'HIGHRES_IMU'): # 50 HZ
             self._current_data.local_ts = time.time()
             self._current_data.timestamp = msg_dict['time_usec']/1000.0
@@ -551,19 +563,25 @@ class Hardware_Adapter():
             self._current_data.differential_press_hpa = float(msg_dict['diff_pressure'])
             self._current_data.pressure = float(msg_dict['pressure_alt'])
             self._current_data.temperature = float(msg_dict['temperature'])
-            
+            self._current_data.gathered['imu_ned'] = True
+            self._current_data.gathered['absolute_press_hpa'] = True
+            self._current_data.gathered['differential_press_hpa'] = True
+            self._current_data.gathered['pressure'] = True
+            self._current_data.gathered['temperature'] = True
         elif(key == 'HEARTBEAT'):
             self._current_data.local_ts = time.time()
             self._current_data.mode = msg_dict['mode_string']
             self._current_data.custom_mode_id = msg_dict['custom_mode']
-            
+            self._current_data.gathered['mode'] = True
+            self._current_data.gathered['custom_mode_id'] = True
         elif(key== 'LOCAL_POSITION_NED' ):
             self._current_data.local_ts = time.time()
             self._current_data.timestamp = msg_dict['time_boot_ms']
             self._current_data.pos_ned_m.ned = np.array([msg_dict['x'], msg_dict['y'], msg_dict['z']])
             self._current_data.pos_ned_m.vel_ned = np.array([msg_dict['vx'], msg_dict['vy'], msg_dict['vz']])
             self._current_data.pos_ned_m.timestamp = msg_dict['time_boot_ms']
-                
+            self._current_data.gathered['pos_ned_m'] = True
+            self._current_data.gathered['vel_ned_m'] = True
                 
                 
 

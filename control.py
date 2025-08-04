@@ -77,7 +77,10 @@ class Control():
         # GUIDANCE
         guidance_constant_N = 8 
       
-        self.MaximalThrust = controller.param.mass*9.81*2.5
+        try:
+            self.MaximalThrust = controller.param.mass*9.81*2.5
+        except:
+            self.MaximalThrust = 1
         # self._pitch_accel_sp_p = 0.05
         self.enableIntegrator = False
                 
@@ -112,7 +115,7 @@ class Control():
 ###############################################################################################################################################
     def get_cmd(self, pos_ned, vel_ned, accel_ned, gyro_ned, 
                         quat_ned_bodyfrd, imu_ts, step_dt, current_ts,
-                        counter, trajDest_ned, 
+                        counter, trajDest_ned, currentData=None,  
                         headingDest=None, controlType=None, log_data=True,
                         homingStage=None):
 
@@ -139,7 +142,7 @@ class Control():
         desiredBodyState = [(pos_des_ned, vel_des_ned, accel_des_ned, np.zeros(3), np.zeros(3)), # desired position, velocity and acceleration (taken from trajectory)
                         (b1d_ned, b1d_dot, b1d_ddot)]   # desired direction of the first body axis (taken from trajectory)
         
-        f_total, R_desired, Omega_desired_frd = self.controlnode.getCommand(currentBodyState, desiredBodyState, controlType)
+        f_total, R_desired, Omega_desired_frd = self.controlnode.getCommand(currentBodyState, desiredBodyState, controlType, currentData)
         # f_total_ref, R_desired_ref, Omega_desired_frd_ref = self.controlnode_ref.getCommand(currentBodyState, desiredBodyState, controlType)
 
         if self.controlnode.controllerType == "VelocityPID":
@@ -148,6 +151,12 @@ class Control():
             velCmdAbsClipped = np.clip(velCmdAbs, 0, self.maximalVelocity)
             velCmd = velCmdDir * velCmdAbsClipped
             command = velCmd
+        elif self.controlnode.controllerType == "VelocityRL":
+            velCmd = f_total
+            command = velCmd
+            rpyRate_cmd = Omega_desired_frd
+            R_desired = quat_ned_bodyfrd.to_rotation_matrix()
+            
         elif self.controlnode.controllerType == "AccelerationPID":
             accCmdDir = f_total/np.linalg.norm(f_total)
             accCmdAbs = np.linalg.norm(f_total)

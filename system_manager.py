@@ -11,11 +11,10 @@ import os
 import pymap3d
 # import cv2
 import sys
-
-from mavsdk import System
-from mavsdk.offboard import (Attitude, AttitudeRate, OffboardError, VelocityNedYaw, VelocityBodyYawspeed)
-import asyncio
-
+import zmq
+import zmqWrapper
+import zmqTopics
+import pickle
 # from Filter.AllInOneKalman import AllInOneKalman
 # from virtual_tracker import Tracker
 
@@ -24,18 +23,19 @@ import asyncio
 # from controlBrescianini import BrescianiniController
 # from controlKooijman import KooijmanController
 from controlVelocityPID import VelocityPIDController
+from controlVelocityRL import VelocityRLController
 # from controlAccelerationPID import AccelerationPIDController
 # from controlJaeyoung import JaeyoungController
 
-sys.path.append('../')
-try:
-    import src.zmqTopics as zmqTopics
-    import src.zmqWrapper as zmqWrapper
-    import src.mps as mps
-except:
-    import zmqTopics
-    import zmqWrapper
-    import mps
+# sys.path.append('../')
+# try:
+#     import src.zmqTopics as zmqTopics
+#     import src.zmqWrapper as zmqWrapper
+#     import src.mps as mps
+# except:
+#     import zmqTopics
+#     import zmqWrapper
+#     import mps
 
 class MISSION_TYPE(Enum):
     NONE = 0
@@ -88,16 +88,17 @@ class System_Manager():
         ##############################
         # start scenario definitions #
         ##############################
-        self.missionType = MISSION_TYPE.CIRCLE    # 1 - WAYPOINT, 2 - VELOCITY, 3 - CIRCLE, 4 - LISSAJOUS, 5 - TRACKER, 6 - SECTION
+        self.missionType = MISSION_TYPE.WAYPOINT    # 1 - WAYPOINT, 2 - VELOCITY, 3 - CIRCLE, 4 - LISSAJOUS, 5 - TRACKER, 6 - SECTION
         self.yawControlType = YAW_COMMAND.HOLD_CUR_DIR   #YAW_COMMAND.CAMERA_DIR   #YAW_COMMAND.VELOCITY_DIR  # YAW_COMMAND.HOLD_CUR_DIR
         
         self.maximalVelocity = 3 # m/s (horizontal)
         self.descentVelocity = 10
-        self.originOffset_frd = np.array([0,0,0])   # target waypoint in mode 1 or center of the circle in mode 3
+        self.originOffset_frd = np.array([10,0,0])   # target waypoint in mode 1 or center of the circle in mode 3
         self.terminalHomingAlowed = True 
         self.circleRadius = 10
         
-        self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass), maximalVelocity=self.maximalVelocity)
+        #self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass), maximalVelocity=self.maximalVelocity)
+        self._control = Control(self._config_dir, self._log_dir, controller=VelocityRLController()) 
         # self._control = Control(self._config_dir, self._log_dir, controller=AccelerationPIDController(mass=self.dronemass))
         # self._control = Control(self._config_dir, self._log_dir, controller=GeometricController(mass=self.dronemass))
         # self._control = Control(self._config_dir, self._log_dir, controller=AdaptiveGeometricController(mass=self.dronemass))
@@ -110,32 +111,9 @@ class System_Manager():
         # end of scenario definitions #
         ###############################
         
-        topicsList = [ 
-                       [zmqTopics.topicMavlinkOdometry,         zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkVelocityNed,      zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkAttitudeTarget,   zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkAttitude,         zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkAttitudeRate,     zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkAltitude,         zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkHighresIMU,       zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkAttitudeQuat,     zmqTopics.topicMavlinkPort],          
-                       [zmqTopics.topicMavlinkLocalPositionNed, zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkGlobalPositionInt,zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkCurrentMode,      zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkHeartbeat,        zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkVFR_HUD,          zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkDistanceSensor,   zmqTopics.topicMavlinkPort],
-                       [zmqTopics.topicMavlinkOpticalFlow,      zmqTopics.topicMavlinkPort],
-             ]
+        self.subsSock = zmqWrapper.subscribe( topics=[ zmqTopics.topicMavlinkFlightData ], port=zmqTopics.topicMavlinkPort )
 
-        self.subsSocks=[]
-        self.mpsDict = {}
-
-        for topic in topicsList:
-            self.mpsDict[topic[0]] = mps.MPS(topic[0])
-            self.subsSocks.append( zmqWrapper.subscribe( [ topic[0] ], topic[1] ) )
-        
-        self.currentData = Flight_Data()
+        self._currentData = Flight_Data()
         self.trackData = None
         self.pubSock = zmqWrapper.publisher(zmqTopics.topicGuidenceCmdPort)
 
@@ -159,19 +137,19 @@ class System_Manager():
                                 command, rpy_rate_cmd, quat_ned_desbodyfrd_cmd, step_dt, counter,
                                 destination_ned):
         # print(target_received,trk_i, trk_j )
-        self._input_logger.log({"imu_ts":self.currentData.imu_ned.timestamp,
-                                "accl_ned_x": self.currentData.imu_ned.accel[0],"accl_ned_y": self.currentData.imu_ned.accel[1], "accl_ned_z": self.currentData.imu_ned.accel[2],
-                                "gyro_ned_x": self.currentData.imu_ned.gyro[0], "gyro_ned_y": self.currentData.imu_ned.gyro[1], "gyro_ned_z": self.currentData.imu_ned.gyro[2],
-                                "pos_ned_ts": self.currentData.pos_ned_m.timestamp,
-                                "pos_ned_x": self.currentData.pos_ned_m.ned[0], "pos_ned_y": self.currentData.pos_ned_m.ned[1], "pos_ned_z": self.currentData.pos_ned_m.ned[2],
-                                "vel_ned_x": self.currentData.pos_ned_m.vel_ned[0], "vel_ned_y": self.currentData.pos_ned_m.vel_ned[1], "vel_ned_z": self.currentData.pos_ned_m.vel_ned[2],
-                                "quat_ned_bodyfrd_ts": self.currentData.quat_ned_bodyfrd.timestamp,
-                                "quat_ned_bodyfrd_x": self.currentData.quat_ned_bodyfrd.x, "quat_ned_bodyfrd_y": self.currentData.quat_ned_bodyfrd.y,
-                                "quat_ned_bodyfrd_z": self.currentData.quat_ned_bodyfrd.z, "quat_ned_bodyfrd_w": self.currentData.quat_ned_bodyfrd.w,
-                                "lla_ts": self.currentData.raw_pos_lla_deg.timestamp,
-                                "lla_lat_deg": self.currentData.raw_pos_lla_deg.lla[0], "lla_lon_deg": self.currentData.raw_pos_lla_deg.lla[1], "lla_alt": self.currentData.raw_pos_lla_deg.lla[2],
+        self._input_logger.log({"imu_ts":self._currentData.imu_ned.timestamp,
+                                "accl_ned_x": self._currentData.imu_ned.accel[0],"accl_ned_y": self._currentData.imu_ned.accel[1], "accl_ned_z": self._currentData.imu_ned.accel[2],
+                                "gyro_ned_x": self._currentData.imu_ned.gyro[0], "gyro_ned_y": self._currentData.imu_ned.gyro[1], "gyro_ned_z": self._currentData.imu_ned.gyro[2],
+                                "pos_ned_ts": self._currentData.pos_ned_m.timestamp,
+                                "pos_ned_x": self._currentData.pos_ned_m.ned[0], "pos_ned_y": self._currentData.pos_ned_m.ned[1], "pos_ned_z": self._currentData.pos_ned_m.ned[2],
+                                "vel_ned_x": self._currentData.pos_ned_m.vel_ned[0], "vel_ned_y": self._currentData.pos_ned_m.vel_ned[1], "vel_ned_z": self._currentData.pos_ned_m.vel_ned[2],
+                                "quat_ned_bodyfrd_ts": self._currentData.quat_ned_bodyfrd.timestamp,
+                                "quat_ned_bodyfrd_x": self._currentData.quat_ned_bodyfrd.x, "quat_ned_bodyfrd_y": self._currentData.quat_ned_bodyfrd.y,
+                                "quat_ned_bodyfrd_z": self._currentData.quat_ned_bodyfrd.z, "quat_ned_bodyfrd_w": self._currentData.quat_ned_bodyfrd.w,
+                                "lla_ts": self._currentData.raw_pos_lla_deg.timestamp,
+                                "lla_lat_deg": self._currentData.raw_pos_lla_deg.lla[0], "lla_lon_deg": self._currentData.raw_pos_lla_deg.lla[1], "lla_alt": self._currentData.raw_pos_lla_deg.lla[2],
                                 "current_ts":current_ts, "step_dt":step_dt, "imu_ts":imu_ts,
-                                "current_alt": self.currentData.altitude_m.relative, "command": command, 
+                                "current_alt": self._currentData.relative_m, "command": command, 
                                 "rpy_rate_cmd_x": rpy_rate_cmd[0], "rpy_rate_cmd_y": rpy_rate_cmd[1], "rpy_rate_cmd_z": rpy_rate_cmd[2], 
                                 "quat_ned_desbodyfrd_cmd_x": quat_ned_desbodyfrd_cmd.x, "quat_ned_desbodyfrd_cmd_y": quat_ned_desbodyfrd_cmd.y,
                                 "quat_ned_desbodyfrd_cmd_z": quat_ned_desbodyfrd_cmd.z, "quat_ned_desbodyfrd_cmd_w": quat_ned_desbodyfrd_cmd.w,
@@ -194,21 +172,21 @@ class System_Manager():
     def sys_manager_step(self, counter = -1, log_data=True):
         self.gatherData()
 
-        if (not self.currentData.gathered['quat_ned_bodyfrd']) or \
-            (not self.currentData.gathered['pos_ned_m']) or \
-            (not self.currentData.gathered['imu_ned']) :#or \
-        # (not self.currentData.gathered['tracker_px']):
+        if (not self._currentData.gathered['quat_ned_bodyfrd']) or \
+            (not self._currentData.gathered['pos_ned_m']) or \
+            (not self._currentData.gathered['imu_ned']) :#or \
+        # (not self._currentData.gathered['tracker_px']):
             print('-return-0-')
             return
-        self.holdonHeight = self.currentData.pos_ned_m.ned[2] if self.holdonHeight is None else self.holdonHeight
-        self.holdonHeading = self.currentData.quat_ned_bodyfrd.rotate_vec(np.array([1, 0, 0])) if self.holdonHeading is None else self.holdonHeading
-        self.holdonPos_ned = self.currentData.pos_ned_m.ned if self.holdonPos_ned is None else self.holdonPos_ned
+        self.holdonHeight = self._currentData.pos_ned_m.ned[2] if self.holdonHeight is None else self.holdonHeight
+        self.holdonHeading = self._currentData.quat_ned_bodyfrd.rotate_vec(np.array([1, 0, 0])) if self.holdonHeading is None else self.holdonHeading
+        self.holdonPos_ned = self._currentData.pos_ned_m.ned if self.holdonPos_ned is None else self.holdonPos_ned
         self.holdonTime = time.time() if self.holdonTime is None else self.holdonTime
         
-        # imu_ned = deepcopy(self.currentData.imu_ned)          
-        pos_ned = deepcopy(self.currentData.pos_ned_m.ned)
+        # imu_ned = deepcopy(self._currentData.imu_ned)          
+        pos_ned = deepcopy(self._currentData.pos_ned_m.ned)
         
-        quat_ned_bodyfrd = self.currentData.quat_ned_bodyfrd
+        quat_ned_bodyfrd = self._currentData.quat_ned_bodyfrd
                
         current_ts = time.time()
                
@@ -221,8 +199,8 @@ class System_Manager():
         if self.yawControlType == YAW_COMMAND.HOLD_CUR_DIR and self.yawDefinedDir_ned is not None:
             self.heading_dir_ned = deepcopy(self.yawDefinedDir_ned)    
         elif self.yawControlType == YAW_COMMAND.VELOCITY_DIR:
-            if np.linalg.norm(self.currentData.pos_ned_m.vel_ned[0:2])>1:
-                self.heading_dir_ned = deepcopy(self.currentData.pos_ned_m.vel_ned)
+            if np.linalg.norm(self._currentData.pos_ned_m.vel_ned[0:2])>1:
+                self.heading_dir_ned = deepcopy(self._currentData.pos_ned_m.vel_ned)
                 self.heading_dir_ned[2] = 0; self.heading_dir_ned = unitVec(self.heading_dir_ned)
         elif self.yawControlType == YAW_COMMAND.CAMERA_DIR:
             self.heading_dir_ned = unitVec(np.array([self.los_ned_dir[0], self.los_ned_dir[1], 0]))
@@ -265,7 +243,7 @@ class System_Manager():
             self.dest_pos_ned = desired_trajectory[0][0]
             self.destHeight = desired_trajectory[0][0][2]           
                
-        trajDest_pos_ned = np.array(self.dest_pos_ned);  trajDest_pos_ned[2] = self.currentData.pos_ned_m.ned[2] if self.destHeight is None else self.destHeight
+        trajDest_pos_ned = np.array(self.dest_pos_ned);  trajDest_pos_ned[2] = self._currentData.pos_ned_m.ned[2] if self.destHeight is None else self.destHeight
         trajDest_vel_ned = np.array([0,0,0]) if desired_trajectory is None else desired_trajectory[0][1]
         trajDest_acc_ned = np.array([0,0,0]) if desired_trajectory is None else desired_trajectory[0][2]
         
@@ -273,13 +251,13 @@ class System_Manager():
             
         # at HIGH_ALTITUDE_FOLLOW guidance state command is derived from trajDest
         # at TERMINAL_GUIDANCE    guidance state command is derived from los_ned_dir and los_distance
-        command, rpyRate_cmd, quat_ned_desbodyfrd_cmd = self._control.get_cmd(pos_ned=self.currentData.pos_ned_m.ned, vel_ned=self.currentData.pos_ned_m.vel_ned, accel_ned=self.currentData.imu_ned.accel, 
-                                                                gyro_ned=self.currentData.imu_ned.gyro,
+        command, rpyRate_cmd, quat_ned_desbodyfrd_cmd = self._control.get_cmd(pos_ned=self._currentData.pos_ned_m.ned, vel_ned=self._currentData.pos_ned_m.vel_ned, accel_ned=self._currentData.imu_ned.accel, 
+                                                                gyro_ned=self._currentData.imu_ned.gyro,
                                                                  quat_ned_bodyfrd=quat_ned_bodyfrd,
-                                                                imu_ts=self.currentData.imu_ts, step_dt=current_ts-self._prev_ts, current_ts=current_ts,                                                                
+                                                                imu_ts=self._currentData.imu_ts, step_dt=current_ts-self._prev_ts, current_ts=current_ts,                                                                
                                                                 counter=counter, trajDest_ned=trajDest, controlType=controlType, 
                                                                 headingDest=(self.heading_dir_ned, np.zeros(3), np.zeros(3)),
-                                                                homingStage=self.homingStage)
+                                                                homingStage=self.homingStage, currentData = self._currentData)
         rollpitchlimit = np.deg2rad(20)
         rpy=quat_ned_desbodyfrd_cmd.to_euler().rpy
         rpy[0] = np.clip(rpy[0], -rollpitchlimit, rollpitchlimit)
@@ -292,7 +270,7 @@ class System_Manager():
         forward_dir_frd = quat_ned_bodyfrd.rotate_vec(np.array([1,0,0]))
         yawCmd=np.arctan2(forward_dir_frd[1], forward_dir_frd[0])
         if self.yawControlType == YAW_COMMAND.NO_CONTROL:
-            yawCmd = self.currentData.heading
+            yawCmd = self._currentData.heading
         else:
             heading_dir_ned = self.heading_dir_ned 
             yawCmd = np.arctan2(heading_dir_ned[1], heading_dir_ned[0])
@@ -300,6 +278,10 @@ class System_Manager():
         if self._control.controlnode.controllerType == "VelocityPID":
             msg = { 'ts': time.time(), 'velCmd':command, 'yawCmd':yawCmd, 'yawRateCmd':0, }
             self.pubSock.send_multipart([zmqTopics.topicGuidenceCmdVelNedYaw, pickle.dumps(msg)])
+        elif self._control.controlnode.controllerType == "VelocityRL":
+            command_ned = command
+            msg = { 'ts': time.time(), 'velCmd':command_ned, 'yawCmd':0, 'yawRateCmd':yawCmd, }
+            self.pubSock.send_multipart([zmqTopics.topicGuidenceCmdVelBodyYawRate, pickle.dumps(msg)])
         elif self._control.controlnode.controllerType == "AccelerationPID":
             msg = { 'ts': time.time(), 'accCmd':command, 'yawCmd':yawCmd, 'yawRateCmd':0, }
             self.pubSock.send_multipart([zmqTopics.topicGuidenceCmdAccYaw, pickle.dumps(msg)])
@@ -324,21 +306,21 @@ class System_Manager():
                 "   Command:" + str(command)+ " deltaPos_frd:"+str(deltaPos_frd))#+"   delta_frd"+str(deltaPos_frd))
             
             try:
-                print('<<--', np.linalg.norm(missionPoint[0:2]-pos_ned[0:2]))
+                print('<<--', np.linalg.norm(missionPoint[0:2]-pos_ned[0:2])+" timestamp:"+str(self._currentData.timestamp))
             except:
                 pass
         
         if log_data:
-            self._log_input_data(current_ts=current_ts, step_dt=current_ts-self._prev_ts, imu_ts=self.currentData.imu_ts,                        
+            self._log_input_data(current_ts=current_ts, step_dt=current_ts-self._prev_ts, imu_ts=self._currentData.imu_ts,                        
                                 command=command, rpy_rate_cmd=rpyRate_cmd, quat_ned_desbodyfrd_cmd=quat_ned_desbodyfrd_cmd,
                                 counter=counter, destination_ned=trajDest_pos_ned)
         send_start = time.time()
             
         # self._hardware_adapter.send_command(quat_cmd=quat_ned_desbodyfrd_cmd, rpy_rate=rpyRate_cmd, thrust=command)
         send_time = time.time()-send_start
-        self._prev_imu_ts = self.currentData.imu_ts
+        self._prev_imu_ts = self._currentData.imu_ts
         self._prev_ts = current_ts
-        self._prev_pos_ned = self.currentData.pos_ned_m.ned
+        self._prev_pos_ned = self._currentData.pos_ned_m.ned
         self.prev_quat_ned_desbodyfrd_cmd = quat_ned_desbodyfrd_cmd
         
             
@@ -544,143 +526,53 @@ class System_Manager():
         return (x, x_dot, x_2dot, x_3dot, x_4dot), (b1, b1_dot, b1_2dot), (pos_control, vel_control, yaw_control)
 #################################################################################################################
     def gatherData(self):
-        socks = zmq.select(self.subsSocks, [], [], timeout=0.001)
-        if len(socks)>0:
-            for sock in socks:
-                if len(sock) == 0:
-                    continue
-                ret = sock[0].recv_multipart()
-                #topic,data=ret[0],pickle.loads(ret[1])
+        subsSock2 = zmqWrapper.subscribe( topics=[ zmqTopics.topicMavlinkFlightData ], port=zmqTopics.topicMavlinkPort )
+
+        socks = zmq.select([subsSock2], [], [], 0.001)[0]
+        while True:
+            if len(socks) > 0:
+                socket = socks[0]
+                ret = socket.recv_multipart()
                 topic = ret[0]
-                if topic in self.mpsDict.keys():
-                    self.mpsDict[topic].calcMPS()
                 data = pickle.loads(ret[1])
-                
-                if topic == zmqTopics.topicMavlinkAttitude:                           # mavlink ATTITUDE
-                    time_boot_ms = data['time_boot_ms']        # Flight controller time
-                    ts = data['local-ts']
-                    roll       = np.deg2rad(data['roll'])
-                    pitch      = np.deg2rad(data['pitch'])
-                    yaw        = np.deg2rad(data['yaw'])
-                    self.currentData.rpy2 = np.array([roll, pitch, yaw])
-                    self.currentData.gathered['euler_ned_bodyfrd']=True
-                    
-                elif topic == zmqTopics.topicMavlinkAttitudeRate:                           # mavlink ATTITUDE
-                    time_boot_ms = data['time_boot_ms']        # Flight controller time
-                    ts = data['local-ts']
-                    rollspeed  = np.deg2rad(data['rollspeed'])
-                    pitchspeed = np.deg2rad(data['pitchspeed'])
-                    yawspeed   = np.deg2rad(data['yawspeed'])
-                    self.currentData.rpy2_rates = np.array([rollspeed, pitchspeed, yawspeed])
-                    
-                elif topic == zmqTopics.topicMavlinkHighresIMU:                              # mavlink HIGHRES_IMU
-                # Flight controller time
-                    gyro_frd  = np.array([data['xgyro'], data['ygyro'], data['zgyro']  ])
-                    accel_frd = np.array([data['xacc'] , data['yacc'] , data['zacc']  ])
-                    self.currentData.imu_ned.accel = self.currentData.quat_ned_bodyfrd.inv().rotate_vec(accel_frd)
-                    self.currentData.imu_ned.gyro = self.currentData.quat_ned_bodyfrd.inv().rotate_vec(gyro_frd)
-                    temperature = data['temperature']
-                    # self.currentData.altitude_m.relative    = data['pressure_alt']
-                    self.currentData.imu_ned.timestamp = data['local-ts']
-                    self.currentData.imu_ts = data['time_boot_ms']
-                    self.currentData.gathered['imu_ned']=True                    
-                    
-                    #if (self.currentData.custom_mode_id == 50593792) or \ # and self.currentData.groundspeed<0.5) or  \
-                    if self.currentData.custom_mode_id == 50593792 or \
-                       self.currentData.custom_mode_id == 196608  or\
-                       self.currentData.custom_mode_id == 131072 or \
-                       self.currentData.custom_mode_id == 65535 or \
-                       self.currentData.custom_mode_id ==84148224:  # HOLD ON state or POSITION state
+                if topic == zmqTopics.topicMavlinkFlightData:  
+                    self._currentData = data# mavlink LOCAL_POSITION_NED      # Flight controller time                  
+                    #if (self._currentData.custom_mode_id == 50593792) or \ # and self._currentData.groundspeed<0.5) or  \
+                    if self._currentData.custom_mode_id == 50593792 or \
+                        self._currentData.custom_mode_id == 196608  or \
+                        self._currentData.custom_mode_id == 131072 or \
+                        self._currentData.custom_mode_id == 65535 or \
+                        self._currentData.custom_mode_id ==84148224:  # HOLD ON state or POSITION state
                         
-                        self.holdonHeight = self.currentData.pos_ned_m.ned[2]
-                        self.yawDefinedDir_ned = np.array([np.cos(self.currentData.heading), np.sin(self.currentData.heading), 0])
+                        self.holdonHeight = self._currentData.pos_ned_m.ned[2]
+                        self.yawDefinedDir_ned = np.array([np.cos(self._currentData.heading), np.sin(self._currentData.heading), 0])
                         self.holdonHeading = self.yawDefinedDir_ned
-                        self.holdonPos_ned = self.currentData.pos_ned_m.ned
+                        self.holdonPos_ned = self._currentData.pos_ned_m.ned
                         self.holdonTime = time.time()
                         
-                        if self.currentData.throttle>5:
-                            self._control.MaximalThrust = self._control.controlnode.param.mass*9.81/self.currentData.throttle*100
-                            self._control.controlnode.resetIntegralErrorTerms()
+                        if self._currentData.throttle>5:
+                            if self._control.controlnode.controllerType == "VelocityRL":
+                                self._control.MaximalThrust = 1
+                            else:
+                                self._control.MaximalThrust = self._control.controlnode.param.mass*9.81/self._currentData.throttle*100
+                                self._control.controlnode.resetIntegralErrorTerms()
                         
                         self.homingStage = HOMING_STAGE.SECTION if self.missionType == MISSION_TYPE.TRACKER else HOMING_STAGE.NONE
-                        self.currentData.offboardMode = False
+                        self._currentData.offboardMode = False
                         
-                    elif self.currentData.custom_mode_id == 393216:  # OFFBOARD state
-                        self.currentData.offboardMode = True
-                        if not self._control.controlnode.use_integralTerm:
-                            self._control.controlnode.resetIntegralErrorTerms()
-                            self._control.controlnode.use_integralTerm = True
-                            
-                elif topic == zmqTopics.topicMavlinkAttitudeQuat:                         # mavlink ATTITUDE_QUATERNION
-                    time_boot_ms = data['time_boot_ms']        # Flight controller time
-                    ts = data['local-ts']                            # time of receiving the message
-                    w = data['q1']
-                    x = data['q2']
-                    y = data['q3']
-                    z = data['q4']
-
-                    self.currentData.quat_ned_bodyfrd.set(x=x, y=y,z=z,w=w,timestamp=ts) 
-                    # self.currentData.rpy_rates = np.array([rollrate, pitchrate, yawrate])
-                    self.currentData.gathered['quat_ned_bodyfrd']=True
-
-                elif topic == zmqTopics.topicMavlinkLocalPositionNed:               # mavlink LOCAL_POSITION_NED
-                           # Flight controller time
-                    self.currentData.pos_ned_m.ned       = np.array([data['north_m'], data['east_m'], data['down_m']])
-                    self.currentData.pos_ned_m.vel_ned   = np.array([data['vx_m_s'], data['vy_m_s'], data['vz_m_s']])
-                    self.currentData.pos_ned_m.timestamp = data['local-ts']
-                    self.currentData.gathered['pos_ned_m']=True
-                    
-                elif topic == zmqTopics.topicMavlinkGlobalPositionInt:                    # navlink GLOBAL_POSITION_INT
-                           # Flight controller time
-                    ts = data['local-ts']                            # time of receiving the message
-                    lat = data['lat']   # deg
-                    lon = data['lon']   # deg
-                    alt = data['alt']   # m
-                    relative_alt = data['relative_alt']
-                    self.currentData.filt_pos_lla_deg = LLA(timestamp=ts, lla=[lat, lon, alt])
-                    
-                elif topic == zmqTopics.topicMavlinkOdometry:   
-                    ts = data['local-ts']                            # time of receiving the message
-                    omega_body = np.array([data['roll_rad_s'], data['pitch_rad_s'], data['yaw_rad_s']])
-                    pos_body = np.array([data['x_m'], data['y_m'], data['z_m']])
-                    self.currentData.quat_ned_bodyfrd = Quaternion(w=data['q1'], x=data['q2'], y=data['q3'], z=data['q4'])
-                    timestamp = data['time_boot_ms']
-                    vel_body = np.array([data['vel_body_x_m_s'], data['vel_body_y_m_s'], data['vel_body_z_m_s']])
-                    frame_id = data['frame_id']
-                    child_frame_id = data['child_frame_id']
-                    self.currentData.pos_ned_m.ned = self.currentData.quat_ned_bodyfrd.rotate_vec(pos_body)
-                    self.currentData.pos_ned_m.vel_ned = self.currentData.quat_ned_bodyfrd.rotate_vec(vel_body)
-                    self.currentData.gathered['pos_ned_m']=True
-                    self.currentData.gathered['quat_ned_bodyfrd']=True
-                    self.currentData.rpy2_rates = omega_body
-                    
-                elif topic == zmqTopics.topicMavlinkCurrentMode:                    # mavlink CURRENT_MODE
-                    ts = data['ts']                            # time of receiving the message
-                    standart_mode = data['standart_mode']
-                    custom_mode   = data['custom_mode']
-                    intended_custom_mode = data['intended_custom_mode']
-                    
-                elif topic == zmqTopics.topicMavlinkHeartbeat:                    # mavlink CURRENT_MODE
-                    ts = data['local-ts']                            # time of receiving the message
-                    type = data['type']
-                    autopilot = data['autopilot']
-                    base_mode   = data['base_mode']
-                    self.currentData.custom_mode_id = data['custom_mode']
-                    system_status = data['system_status']
-                    mavlink_version = data['mavlink_version']
-                    mode_string = data['mode_string']
-
-                elif topic == zmqTopics.topicMavlinkVFR_HUD:                    # mavlink VFR_HUD
-                    ts = data['local-ts']                            # time of receiving the message
-                    airspeed = data['airspeed']
-                    groundspeed = data['groundspeed']
-                    heading_deg = data['heading']       # heding in degrees from north
-                    self.currentData.throttle = data['throttle']
-                    alt = data['alt']
-                    climb = data['climb']
-                    self.currentData.heading = np.deg2rad(heading_deg)
-
+                    elif self._currentData.custom_mode_id == 393216:  # OFFBOARD state
+                        self._currentData.offboardMode = True
+                        if self._control.controlnode.controllerType != "VelocityRL":
+                            if not self._control.controlnode.use_integralTerm:
+                                self._control.controlnode.resetIntegralErrorTerms()
+                                self._control.controlnode.use_integralTerm = True
+                    break
+                
+            socks = zmq.select([subsSock2], [], [], 0.001)[0]
             
+        subsSock2.close()
+
+
 ############################################################################################################################
 ############################################################################################################################
 ############################################################################################################################
@@ -689,6 +581,7 @@ class System_Manager():
 if __name__=='__main__':
     sysMgr = System_Manager(log_dir='../logs/', config_dir='config/')
     while True:
-        time.sleep(0.0001)
+        # time.sleep(0.0001)
+        time.sleep(0.01)
         sysMgr.sys_manager_step()
 
