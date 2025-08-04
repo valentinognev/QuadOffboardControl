@@ -11,7 +11,7 @@ from common import Utils, Quaternion, Flight_Data, MAV_CMD, FLIGHT_MODE, Rate_Cm
 from low_pass_filter import Low_Pass_Filter
 
 import numpy as np
-from mavlink_parser import Mavlink_Parser
+
 from pymavlink import mavutil
 import multiprocessing
 from multiprocessing import  Lock
@@ -46,18 +46,7 @@ RELEVANT_MAVLINK_MESSAGES = ['ALTITUDE',
                              'OPTICAL_FLOW']
 
 pubTopicsList = [
-               [zmqTopics.topicMavlinkAltitude,         zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitude,         zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkHighresIMU,       zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitudeQuat,     zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkLocalPositionNed, zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkGlobalPositionInt,zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkAttitudeTarget,   zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkCurrentMode,      zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkHeartbeat,        zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkVFR_HUD,          zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkDistanceSensor,   zmqTopics.topicMavlinkPort],
-               [zmqTopics.topicMavlinkOpticalFlow,      zmqTopics.topicMavlinkPort],
+               [zmqTopics.topicMavlinkFlightData,         zmqTopics.topicMavlinkPort],
             ]
 
 mpsDict = {}
@@ -68,10 +57,10 @@ for topic in pubTopicsList:
     mpsDict[topic[0]] = mps.MPS(topic[0])
 
 subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
-                                zmqTopics.topicGuidenceCmdVelYaw,
-                                zmqTopics.topicGuidenceCmdAccYaw,
-                                zmqTopics.topicGuidenceCmdTakeoff,
-                                zmqTopics.topicGuidenceCmdLand,
+                                zmqTopics.topicGuidenceCmdVelNedYaw,
+                                zmqTopics.topicGuidenceCmdVelBodyYawRate,
+                                # zmqTopics.topicGuidenceCmdTakeoff,
+                                # zmqTopics.topicGuidenceCmdLand,
                                 zmqTopics.topicGuidanceCmdArm,
                                 ], zmqTopics.topicGuidenceCmdPort)
 
@@ -101,7 +90,7 @@ class Hardware_Adapter():
         # if(self._disable_offboard_control):
         #     print("offboard control disabled")
 
-        self._mavlink_parser = Mavlink_Parser()
+        self.flight_data = {}
         self._current_airspeed = 0
         self._mavlink_logger = Logger("mavlink", log_dir=self._log_dir, save_log_to_file=True, print_logs_to_console=False, datatype="TXT")
 
@@ -139,7 +128,7 @@ class Hardware_Adapter():
             
         if msg_dict['mavpackettype'] in RELEVANT_MAVLINK_MESSAGES:
             ind = RELEVANT_MAVLINK_MESSAGES.index(msg_dict['mavpackettype'])
-            sockPub.send_multipart([pubTopicsList[ind][0], pickle.dumps(msg_dict)])
+            self.parse(msg_dict, self.flight_data)
         else:
             pass
             # print(str(msg_dict))
@@ -161,10 +150,11 @@ class Hardware_Adapter():
             thrustCmd = msg['thrustCmd']
             self._send_goal_attitude(targetQuat, rpyRateCmd, thrustCmd)
             
-        elif topic == zmqTopics.topicGuidenceCmdVelYaw:     
-            yawCmd = data['yawCmd']
-            velCmd = data['velCmd']
-            self._send_setpoint(pos=None, vel=velCmd, acc=None, yaw=yawCmd, yaw_rate=None)
+        elif topic == zmqTopics.topicGuidenceCmdVelBodyYawRate:     
+            yawRateCmd = data['yawRateCmd']
+            velCmd = self._current_data.quat_ned_bodyfrd.rotate_vec(data['velCmd'])
+            velCmd[2] = 0.0
+            self._send_setpoint(pos=None, vel=velCmd, acc=None, yaw=None, yaw_rate=yawRateCmd)
             
         elif topic == zmqTopics.topicGuidenceCmdAccYaw:
             yawCmd = data['yawCmd']
@@ -312,27 +302,6 @@ class Hardware_Adapter():
             self._prev_alt_ts = np.copy(current_mavlink_data.altitude_m.timestamp)
             
 #################################################################################################################
-    def _update_data(self, new_data_dict, current_data):
-        if(new_data_dict is None):
-            return         
-
-        if 'topic' in new_data_dict.keys():
-            try:
-                new_data = self._mavlink_parser.parse(new_data_dict, current_data)
-            except Exception as e:
-                try:
-                    new_data = self._mavlink_parser.parse(new_data_dict, current_data)
-                    print("error parsing mavlink",e)
-                except Exception as e:
-                    pass
-            else:
-                pass
-        else:
-            data = pickle.loads(new_data_dict[1])
-        pass
-                        # print(e)
-
-#################################################################################################################
     def _init_mavlink(self):
         try:
             self.mavlink_connection = mavutil.mavlink_connection('udp:127.0.0.1:14540')
@@ -364,18 +333,15 @@ class Hardware_Adapter():
                 pass
         if(out is None):
             success = False
-        else:
-            self._mavlink_parser = Mavlink_Parser()
-        #print("mode mapping:",self.mavlink_connection.mode_mapping())
-        # self.arm()
+
         return success
 
 #################################################################################################################
-    def _send_setpoint(self, pos=None, vel=None, acc=None, yaw=None, yaw_rate=None):
+    def _send_setpoint(self, pos=None, vel=None, acc=None, yaw=None, yaw_rate=None, frame=mavutil.mavlink.MAV_FRAME_LOCAL_NED):
         # if(not self._offboard_control_enabled):
         #     return
         time_boot_ms = 0
-        coordinate_frame =mavutil.mavlink.MAV_FRAME_LOCAL_NED
+        coordinate_frame = frame
         target_system = self.mavlink_connection.target_system
         target_component = self.mavlink_connection.target_component
         # Bitmask to indicate which fields should be ignored by the vehicle 
@@ -393,6 +359,7 @@ class Hardware_Adapter():
         # Use Pos+Vel+Accel : 0b110000000000 / 0x0C00 / 3072 (decimal)
         # Use Yaw : 0b100111111111 / 0x09FF / 2559 (decimal)
         # Use Yaw Rate : 0b010111111111 / 0x05FF / 1535 (decimal)    
+        type_mask2 = 0b010111000111
         type_mask = 0b000000000000
         if pos is None:
             type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
@@ -415,9 +382,15 @@ class Hardware_Adapter():
         if yaw_rate is None:
             type_mask = type_mask | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
             yaw_rate = 0
-        north = pos[0];        east = pos[1];        down = pos[2]
-        vx = vel[0];        vy = vel[1];        vz = vel[2]
-        afx = acc[0];        afy = acc[1];        afz = acc[2]
+        north = np.float16(pos[0])
+        east = np.float16(pos[1])
+        down = np.float16(pos[2])
+        vx = np.float16(vel[0])
+        vy = np.float16(vel[1])
+        vz = np.float16(vel[2])
+        afx = np.float16(acc[0])
+        afy = np.float16(acc[1])
+        afz = np.float16(acc[2])
 
         self.mavlink_connection.mav.set_position_target_local_ned_send(
             time_boot_ms,
@@ -521,10 +494,89 @@ class Hardware_Adapter():
             self.mavlink_connection.target_component,
             mavutil.mavlink.MAV_CMD_NAV_LAND, 0, 0, 0, 0, 0, 0, 0, 0)
 
+#################################################################################################################
+
+    def parse(self, msg_dict, current_data:Flight_Data):
+        success = False
+
+        key = msg_dict['mavpackettype']
+        if(key == 'TIMESYNC'):
+            pass
+        
+        elif(key == 'VFR_HUD'):
+            self._current_data.local_ts = time.time()
+            self._current_data.altitude_m = msg_dict['alt']
+            self._current_data.heading = np.deg2rad(msg_dict['heading'])
+            self._current_data.throttle = msg_dict['throttle']
+        elif(key == 'SCALED_PRESSURE'):
+            pass
+
+        elif(key == 'SCALED_IMU2'):
+            pass
+        elif(key =='ATTITUDE_QUATERNION'):  # 50 HZ
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_boot_ms']
+            self._current_data.quat_ned_bodyfrd = Quaternion(w=float(msg_dict['q1']), x=float(msg_dict['q2']), y=float(msg_dict['q3']), z=float(msg_dict['q4']))
+            self._current_data.rpy_rates = np.array([float(msg_dict['rollspeed']), float(msg_dict['pitchspeed']), float(msg_dict['yawspeed'])])
+        elif(key == 'ATTITUDE'):
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_boot_ms']
+            self._current_data.rpy = np.array([float(msg_dict['roll']), float(msg_dict['pitch']), float(msg_dict['yaw'])])
+            self._current_data.rpy_rates = np.array([float(msg_dict['rollspeed']), float(msg_dict['pitchspeed']), float(msg_dict['yawspeed'])])
+        elif(key == 'ATTITUDE_TARGET'):
+            pass
+        elif(key == 'GLOBAL_POSITION_INT'):
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_boot_ms']
+            self._current_data.filt_pos_lla_deg.lla = np.array([float(msg_dict['lat'])/(1e7), float(msg_dict['lon'])/(1e7), float(msg_dict['alt'])/(1e3)])
+            self._current_data.relative_m = msg_dict['relative_alt']/1000.0
+            self._current_data.heading = np.deg2rad(msg_dict['hdg']/100.0)
+            self._current_data.pos_ned_m.vel_ned = np.array([float(msg_dict['vx'])/100.0, float(msg_dict['vy'])/100.0, float(msg_dict['vz'])/100.0])
+        elif(key == 'ALTITUDE'): # 10 HZ
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_usec']/1000.0
+            self._current_data.relative_m = float(msg_dict['altitude_relative'])
+            self._current_data.amsl_m = float(msg_dict['altitude_amsl'])
+            self._current_data.local_m = float(msg_dict['altitude_local'])
+            self._current_data.monotonic_m = float(msg_dict['altitude_monotonic'])
+            self._current_data.terrain_m = float(msg_dict['altitude_terrain'])
+            self._current_data.bottom_clearance_m = float(msg_dict['bottom_clearance'])
+        elif(key == 'HIGHRES_IMU'): # 50 HZ
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_usec']/1000.0
+            self._current_data.imu_ned.accel = np.array([float(msg_dict['xacc']), float(msg_dict['yacc']), float(msg_dict['zacc'])])
+            self._current_data.imu_ned.gyro = np.array([float(msg_dict['xgyro']), float(msg_dict['ygyro']), float(msg_dict['zgyro'])])
+            self._current_data.imu_ned.timestamp = self._current_data.timestamp
+            self._current_data.absolute_press_hpa = float(msg_dict['abs_pressure'])
+            self._current_data.differential_press_hpa = float(msg_dict['diff_pressure'])
+            self._current_data.pressure = float(msg_dict['pressure_alt'])
+            self._current_data.temperature = float(msg_dict['temperature'])
+            
+        elif(key == 'HEARTBEAT'):
+            self._current_data.local_ts = time.time()
+            self._current_data.mode = msg_dict['mode_string']
+            self._current_data.custom_mode_id = msg_dict['custom_mode']
+            
+        elif(key== 'LOCAL_POSITION_NED' ):
+            self._current_data.local_ts = time.time()
+            self._current_data.timestamp = msg_dict['time_boot_ms']
+            self._current_data.pos_ned_m.ned = np.array([msg_dict['x'], msg_dict['y'], msg_dict['z']])
+            self._current_data.pos_ned_m.vel_ned = np.array([msg_dict['vx'], msg_dict['vy'], msg_dict['vz']])
+            self._current_data.pos_ned_m.timestamp = msg_dict['time_boot_ms']
+                
+                
+                
 
 if __name__ == '__main__':
     hardware_adapter = Hardware_Adapter(log_dir="logs")
+    outFreq = 100
+    outDT = 1/outFreq
+    current_ts = time.time()
+    outTime = current_ts+outDT
     while(1):
+        if(time.time() > outTime):
+            outTime = time.time()+outDT
+            sockPub.send_multipart([zmqTopics.topicMavlinkFlightData, pickle.dumps(hardware_adapter._current_data)])
         hardware_adapter.listenerToMavlink()
         hardware_adapter.listenerToCommands()
         time.sleep(.0001)

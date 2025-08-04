@@ -282,7 +282,7 @@ class Flight_Data():
         self.rpy_rates = np.zeros(3)                # roll, pitch, yaw rates in radians/s
         self.current_thrust = 0                      # current thrust in percentage
         self.rpy = np.zeros(3)           # roll, pitch, yaw in radians
-        self.rpy2_rates = np.zeros(3)                # roll, pitch, yaw rates in radians/s
+        self.rpy_rates = np.zeros(3)                # roll, pitch, yaw rates in radians/s
         self.custom_mode_id = None                  # custom mode id
         self.custom_mode_name = None                # custom mode name
         self.throttle = 0                           # throttle in percentage

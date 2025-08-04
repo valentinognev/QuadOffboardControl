@@ -47,12 +47,12 @@ for topic in pubTopicsList:
     mpsDict[topic[0]] = mps.MPS(topic[0])
 
 subsList = [zmqTopics.topicGuidenceCmdAttitude, 
-                                zmqTopics.topicGuidenceCmdVelNedYaw,
-                                zmqTopics.topicGuidenceCmdVelBodyYawRate,
-                                zmqTopics.topicGuidenceCmdTakeoff,
-                                zmqTopics.topicGuidenceCmdLand,
-                                zmqTopics.topicGuidanceCmdArm,
-                                ]
+            zmqTopics.topicGuidenceCmdVelNedYaw,
+            zmqTopics.topicGuidenceCmdVelBodyYawRate,
+            # zmqTopics.topicGuidenceCmdTakeoff,
+            # zmqTopics.topicGuidenceCmdLand,
+            # zmqTopics.topicGuidanceCmdArm,
+            ]
 subsPort = zmqTopics.topicGuidenceCmdPort
 
 
@@ -325,28 +325,28 @@ class MAVSDK_Adapter():
         while True:
             async with lock:
                 sockPub.send_multipart([zmqTopics.topicMavlinkFlightData, pickle.dumps(self.flight_data)])
-                if 'timestamp' in self.flight_data.keys():
-                    print("self.flight_data['timestamp'] ", self.flight_data['timestamp'])
+                # if 'timestamp' in self.flight_data.keys():
+                #     print("self.flight_data['timestamp'] ", self.flight_data['timestamp'])
             await asyncio.sleep(self._publishDT)
 
 ################################################################################################################
     async def listenerToCommands(self, drone):
+        subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
+                            zmqTopics.topicGuidenceCmdVelNedYaw,
+                            zmqTopics.topicGuidenceCmdVelBodyYawRate,
+                            # zmqTopics.topicGuidenceCmdTakeoff,
+                            # zmqTopics.topicGuidenceCmdLand,
+                            # zmqTopics.topicGuidanceCmdArm,
+                            ], zmqTopics.topicGuidenceCmdPort)
         while True:
-            subSock = zmqWrapper.subscribe([zmqTopics.topicGuidenceCmdAttitude, 
-                                zmqTopics.topicGuidenceCmdVelNedYaw,
-                                zmqTopics.topicGuidenceCmdVelBodyYawRate,
-                                zmqTopics.topicGuidenceCmdTakeoff,
-                                zmqTopics.topicGuidenceCmdLand,
-                                zmqTopics.topicGuidanceCmdArm,
-                                ], zmqTopics.topicGuidenceCmdPort)
             ret = zmq.select([subSock], [], [], timeout=0.01)
             # ret = ret[0]
             if ret[0] is None or len(ret[0]) == 0:
-                subSock.close()
-                await asyncio.sleep(0.1)
+                # subSock.close()
+                await asyncio.sleep(0.001)
                 continue
             data = subSock.recv_multipart()
-            subSock.close()
+            # subSock.close()
             topic = data[0]
             data = pickle.loads(data[1])
             
