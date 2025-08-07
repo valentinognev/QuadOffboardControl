@@ -150,6 +150,11 @@ class Hardware_Adapter():
             thrustCmd = msg['thrustCmd']
             self._send_goal_attitude(targetQuat, rpyRateCmd, thrustCmd)
             
+        elif topic == zmqTopics.topicGuidenceCmdVelNedYaw:     
+            yawCmd = data['yawCmd']
+            velCmd = data['velCmd']
+            self._send_setpoint(pos=None, vel=velCmd, acc=None, yaw=yawCmd, yaw_rate=None)
+            
         elif topic == zmqTopics.topicGuidenceCmdVelBodyYawRate:     
             yawRateCmd = data['yawRateCmd']
             velCmd = self._current_data.quat_ned_bodyfrd.rotate_vec(data['velCmd'])
@@ -391,7 +396,8 @@ class Hardware_Adapter():
         afx = np.float16(acc[0])
         afy = np.float16(acc[1])
         afz = np.float16(acc[2])
-
+        yaw = np.float16(yaw)
+        yaw_rate = np.float16(yaw_rate)
         self.mavlink_connection.mav.set_position_target_local_ned_send(
             time_boot_ms,
             target_system,
@@ -587,14 +593,21 @@ class Hardware_Adapter():
 
 if __name__ == '__main__':
     hardware_adapter = Hardware_Adapter(log_dir="logs")
-    outFreq = 100
+    outFreq = 500
     outDT = 1/outFreq
     current_ts = time.time()
     outTime = current_ts+outDT
+    
+    printFreq = 1
+    printDt = 1/printFreq
+    printTime = current_ts+printDt
     while(1):
         if(time.time() > outTime):
             outTime = time.time()+outDT
             sockPub.send_multipart([zmqTopics.topicMavlinkFlightData, pickle.dumps(hardware_adapter._current_data)])
+        if(time.time() > printTime):
+            printTime = time.time()+printDt
+            print("timestamp: ", hardware_adapter._current_data.timestamp)
         hardware_adapter.listenerToMavlink()
         hardware_adapter.listenerToCommands()
         time.sleep(.0001)

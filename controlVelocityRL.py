@@ -2,6 +2,7 @@ import time
 import numpy as np
 import torch
 from rl_policy import RLPolicy
+from copy import deepcopy
 
 from math import sin, cos, pi, sqrt, atan2
 
@@ -42,7 +43,7 @@ class VelocityRLController:
             self.yaw=currentData.rpy[2]
         
         ## transform into observation space data
-        delta = self.pos_target - self.pos_self
+        delta = self.pos_target[0:2] - self.pos_self[0:2]
         self.target_distance = np.linalg.norm(delta)
         if self.target_distance > 20.0: self.target_distance = 20.0
         self.target_angle = atan2(delta[1],delta[0])
@@ -54,10 +55,13 @@ class VelocityRLController:
         
         ## execute policy inference
         with torch.no_grad():
-            mean_action, self.hxs = self.policy(obs_tensor, self.hxs)
-            vf,vr,w = mean_action.squeeze(0).numpy()  # [v_r, v_θ, w_yaw]
-            vf = np.clip(vf,-self.max_vel,self.max_vel)
-            vr = np.clip(vr,-self.max_vel,self.max_vel)
+            hxs = deepcopy(self.hxs)
+            mean_action, hxs = self.policy(obs_tensor, hxs)
+            self.hxs = deepcopy(hxs)
+            
+            vf_,vr_,w = mean_action.squeeze(0).numpy()  # [v_r, v_θ, w_yaw]
+            vf = np.clip(vf_,-self.max_vel,self.max_vel)
+            vr = np.clip(vr_,-self.max_vel,self.max_vel)
         
         ## vectorize and send outputs
         vel_vector = [vf,vr,0] # in FRD

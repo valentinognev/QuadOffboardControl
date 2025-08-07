@@ -61,7 +61,7 @@ class VelocityPIDController:
         self.eIV.set_zero()
         
 ###############################################################################################################
-    def getCommand(self, currentBodyState, desiredBodyState, controlType=None):
+    def getCommand(self, currentBodyState, desiredBodyState, controlType=None, currentData=None):
         if controlType is None:
             pos_control=True
             vel_control=True

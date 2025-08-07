@@ -591,10 +591,14 @@ class Quaternion():
         
 #################################################################################################################
     def reverse_rotate_vector(self, x,y,z):
+        if np.linalg.norm(vec) == 0:
+            return np.array([0,0,0])
         return self.conjugate().rotate_vector(x,y,z)
 
 #################################################################################################################
     def rotate_vec(self, vec:np.array):
+        if np.linalg.norm(vec) == 0:
+            return np.array([0,0,0])
         res = (self*Quaternion(x=vec[0], y=vec[1], z=vec[2], w=0))*self.conjugate()
         return np.array([res.x, res.y, res.z])
 

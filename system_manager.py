@@ -74,7 +74,7 @@ class System_Manager():
         self.prev_quat_ned_desbodyfrd_cmd = None
 
         self.destHeight = None
-        self.referencePoint = np.array([10,0,-10])
+        self.referencePoint = np.array([-20,0,-10])
         self.tar_measurement_ned = np.array([0,0,0])
         self.heading_dir_ned = np.array([0,0,0]) 
         self.holdonHeight = None
@@ -97,7 +97,7 @@ class System_Manager():
         self.terminalHomingAlowed = True 
         self.circleRadius = 10
         
-        #self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass), maximalVelocity=self.maximalVelocity)
+        # self._control = Control(self._config_dir, self._log_dir, controller=VelocityPIDController(mass=self.dronemass), maximalVelocity=self.maximalVelocity)
         self._control = Control(self._config_dir, self._log_dir, controller=VelocityRLController()) 
         # self._control = Control(self._config_dir, self._log_dir, controller=AccelerationPIDController(mass=self.dronemass))
         # self._control = Control(self._config_dir, self._log_dir, controller=GeometricController(mass=self.dronemass))
@@ -280,7 +280,7 @@ class System_Manager():
             self.pubSock.send_multipart([zmqTopics.topicGuidenceCmdVelNedYaw, pickle.dumps(msg)])
         elif self._control.controlnode.controllerType == "VelocityRL":
             command_ned = command
-            msg = { 'ts': time.time(), 'velCmd':command_ned, 'yawCmd':0, 'yawRateCmd':yawCmd, }
+            msg = { 'ts': time.time(), 'velCmd':command_ned, 'yawCmd':0, 'yawRateCmd':rpyRate_cmd[2] }
             self.pubSock.send_multipart([zmqTopics.topicGuidenceCmdVelBodyYawRate, pickle.dumps(msg)])
         elif self._control.controlnode.controllerType == "AccelerationPID":
             msg = { 'ts': time.time(), 'accCmd':command, 'yawCmd':yawCmd, 'yawRateCmd':0, }
@@ -300,10 +300,10 @@ class System_Manager():
             if quat_ned_bodyfrd is not None:
                 deltaPos_ned = missionPoint - pos_ned
                 deltaPos_frd = quat_ned_bodyfrd.inv().rotate_vec(deltaPos_ned)
-            print('--->referencePoint: %.3f %.3f %.3f, pos_ned:  %.3f %.3f %.3f '%( 
+            print('timestamp: ', self._currentData.timestamp, '--->referencePoint: %.3f %.3f %.3f, pos_ned:  %.3f %.3f %.3f '%( 
                 self.referencePoint[0], self.referencePoint[1], self.referencePoint[2],
                 pos_ned[0], pos_ned[1], pos_ned[2])+str(self.homingStage)+                
-                "   Command:" + str(command)+ " deltaPos_frd:"+str(deltaPos_frd))#+"   delta_frd"+str(deltaPos_frd))
+                "   Command:" + str(command)+" yawRateCmd:"+str(yawCmd)+" deltaPos_frd:"+str(deltaPos_frd))#+"   delta_frd"+str(deltaPos_frd))
             
             try:
                 print('<<--', np.linalg.norm(missionPoint[0:2]-pos_ned[0:2])+" timestamp:"+str(self._currentData.timestamp))
