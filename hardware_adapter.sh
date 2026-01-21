@@ -37,7 +37,7 @@ tmux send-keys "$PROJECT_PATH/hardware_adapter/bin/zmq_commands_mavlink" ENTER
 
 # Run bridge in bottom-right pane (pane 2)
 tmux select-pane -t 2
-tmux send-keys "python3 $PROJECT_PATH/hardware_adapter/zmq_to_serial_bridge.py --serial-port $SERIAL_PORT --drone-id $DRONE_ID" ENTER
+tmux send-keys "python3 $PROJECT_PATH/hardware_adapter/zmq_to_serial_bridge.py --serial-port $SERIAL_PORT --drone-id $DRONE_ID --target-hz 50" ENTER
 
 # Select the first pane and attach to session
 tmux select-pane -t 0

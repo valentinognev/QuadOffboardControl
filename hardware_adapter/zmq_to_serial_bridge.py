@@ -6,6 +6,7 @@ import time
 import argparse
 import sys
 import logging
+import math
 
 # Configuration
 ZMQ_TOPIC_DATA = b"FLIGHT_DATA"
@@ -94,6 +95,11 @@ def unpack_zmq_message(msg_bytes):
     doubles = unpacked[3:67]
     custom_mode_id = unpacked[67]
     
+    # Note: heading from mavlink_to_ZMQ is in RADIANS (DEG2RAD applied in C code)
+    # Ground station expects DEGREES, so we convert here
+    heading_rad = doubles[IDX_HEADING]
+    heading_deg = math.degrees(heading_rad)
+    
     data = {
         'lat': doubles[IDX_LAT],
         'lon': doubles[IDX_LON],
@@ -101,7 +107,7 @@ def unpack_zmq_message(msg_bytes):
         'vn': doubles[IDX_VN],
         've': doubles[IDX_VE],
         'vd': doubles[IDX_VD],
-        'heading': doubles[IDX_HEADING],
+        'heading': heading_deg,  # Now in degrees
         'custom_mode_id': custom_mode_id
     }
     return data
@@ -113,6 +119,7 @@ def main():
     parser.add_argument("--drone-id", type=int, default=1, help="Drone ID to broadcast")
     parser.add_argument("--zmq-host", default="127.0.0.1", help="ZMQ host")
     parser.add_argument("--zmq-port", type=int, default=ZMQ_PORT, help="ZMQ port to subscribe to")
+    parser.add_argument("--target-hz", type=int, default=50, help="Target output rate in Hz (decimation). Set to 0 to disable.")
     
     args = parser.parse_args()
     
@@ -136,7 +143,14 @@ def main():
     subscriber.connect(zmq_addr)
     subscriber.setsockopt(zmq.SUBSCRIBE, ZMQ_TOPIC_DATA)
     
-    logging.info("Bridge started. Waiting for ZMQ messages...")
+    # Rate limiting setup
+    target_interval = 1.0 / args.target_hz if args.target_hz > 0 else 0
+    last_send_time = 0
+    sent_count = 0
+    skipped_count = 0
+    
+    logging.info(f"Bridge started. Target rate: {args.target_hz} Hz (interval: {target_interval*1000:.1f}ms)")
+    logging.info("Waiting for ZMQ messages...")
     
     msg_count = 0
     try:
@@ -190,9 +204,21 @@ def main():
             # bits: 4(gps) 3 2 1 0(keep_alive)
             bitfield = (gps_fix << 4) | (keep_alive & 0x0F)
             
-            # Debug log values every 100 packets
-            if msg_count % 100 == 0:
-                logging.info(f"ID: {args.drone_id} | Pos: ({data['lat']:.5f}, {data['lon']:.5f}, {data['alt']:.2f}) | Vel: ({data['vn']:.2f}, {data['ve']:.2f}, {data['vd']:.2f}) | Hdg: {data['heading']:.2f}")
+            # Rate limiting: skip if not enough time has passed
+            current_time_sec = time.time()
+            if target_interval > 0:
+                if (current_time_sec - last_send_time) < target_interval:
+                    skipped_count += 1
+                    continue  # Skip this message
+            
+            last_send_time = current_time_sec
+            sent_count += 1
+            
+            # Debug log values periodically
+            if sent_count % 50 == 0:
+                logging.info(f"Sent: {sent_count} | Skipped: {skipped_count} | "
+                            f"Pos: ({data['lat']:.5f}, {data['lon']:.5f}, {data['alt']:.2f}) | "
+                            f"Hdg: {data['heading']:.2f}")
 
             # Pack for Serial using device_utils.py protocol (64 bytes)
             # Structure:
