@@ -3,6 +3,17 @@ import os
 import struct
 from pymavlink import mavutil
 
+"""
+open Q ground Control :
+cd ~/PX4-Autopilot
+QT_OPENGL=software QT_QUICK_BACKEND=software ./QGroundControl-x86_64.AppImage
+
+
+two drones:
+cd ~/
+./Tools/simulation/gazebo-classic/sitl_multiple_run.sh -m iris -n 4
+"""
+
 # NEW: USB/Serial output
 import serial
 
@@ -275,4 +286,5 @@ if __name__ == "__main__":
         )
 
     ser.close()
+
     print("Mission Complete.")
