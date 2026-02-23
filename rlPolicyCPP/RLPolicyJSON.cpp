@@ -242,7 +242,7 @@ public:
     }
 };
 
-RLPolicyJSON::RLPolicyJSON() : obs_size_(0), action_size_(0), gru_hidden_size_(0), gru_input_size_(0) {
+RLPolicyJSON::RLPolicyJSON() : obs_size_(0), action_size_(0), gru_hidden_size_(0), gru_input_size_(0), has_rnn_(true), has_obs_normalizer_(true), use_swarm_encoder_(false) {
     json_data_ = std::make_shared<JSONValue>();
 }
 
@@ -441,22 +441,43 @@ void RLPolicyJSON::extract_flattened_array(std::shared_ptr<JSONValue> val, std::
     }
 }
 
+static std::shared_ptr<RLPolicyJSON::JSONValue> get_weights_object(RLPolicyJSON::JSONValue* json_data) {
+    if (!json_data || json_data->type != RLPolicyJSON::JSONValue::OBJECT) return nullptr;
+    auto it = json_data->object.find("weights");
+    if (it != json_data->object.end() && it->second && it->second->type == RLPolicyJSON::JSONValue::OBJECT)
+        return it->second;
+    auto model_it = json_data->object.find("model");
+    if (model_it != json_data->object.end() && model_it->second && model_it->second->type == RLPolicyJSON::JSONValue::OBJECT) {
+        auto w_it = model_it->second->object.find("weights");
+        if (w_it != model_it->second->object.end() && w_it->second && w_it->second->type == RLPolicyJSON::JSONValue::OBJECT)
+            return w_it->second;
+        return model_it->second;
+    }
+    return nullptr;
+}
+
+bool RLPolicyJSON::has_key_in_weights(const std::string& key) {
+    auto weights = get_weights_object(json_data_.get());
+    return weights && weights->object.find(key) != weights->object.end();
+}
+
+bool RLPolicyJSON::is_swarm_encoder_json() const {
+    return const_cast<RLPolicyJSON*>(this)->has_key_in_weights("actor_encoder.self_goal_encoder.0.weight");
+}
+
 bool RLPolicyJSON::find_mlp_linear_indices(std::vector<int>& indices) {
     indices.clear();
     if (json_data_->type != JSONValue::OBJECT) return false;
     
-    auto weights_it = json_data_->object.find("weights");
-    if (weights_it == json_data_->object.end()) return false;
-    
-    auto weights = weights_it->second;
-    if (weights->type != JSONValue::OBJECT) return false;
+    auto weights = get_weights_object(json_data_.get());
+    if (!weights) return false;
     
     std::set<int> index_set;
     std::string prefix = "encoder.encoders.obs.mlp_head.";
     
     for (const auto& pair : weights->object) {
         const std::string& key = pair.first;
-        if (key.find(prefix) == 0 && key.find(".weight") != std::string::npos) {
+        if (key.size() >= prefix.size() && key.compare(0, prefix.size(), prefix) == 0 && key.find(".weight") != std::string::npos) {
             // Extract index: encoder.encoders.obs.mlp_head.{idx}.weight
             size_t idx_start = prefix.length();
             size_t idx_end = key.find('.', idx_start);
@@ -488,10 +509,12 @@ bool RLPolicyJSON::load_normalizer_from_json() {
         obs_mean_ = mean_data;
         obs_var_ = var_data;
         obs_size_ = mean_shape.empty() ? mean_data.size() : mean_shape[0];
+        has_obs_normalizer_ = true;
         return true;
     }
     
-    // Fallback: infer from encoder
+    has_obs_normalizer_ = false;
+    // Fallback: infer from encoder (MLP or swarm)
     std::vector<int> indices;
     if (find_mlp_linear_indices(indices) && !indices.empty()) {
         std::string first_w_key = "encoder.encoders.obs.mlp_head." + std::to_string(indices[0]) + ".weight";
@@ -503,6 +526,12 @@ bool RLPolicyJSON::load_normalizer_from_json() {
             obs_var_.assign(obs_size_, 1.0f);
             return true;
         }
+    }
+    if (is_swarm_encoder_json()) {
+        obs_size_ = 18;  // self_obs(4) + my_destination_rel(2) + (max_agents-1)*4, default max_agents=4
+        obs_mean_.assign(obs_size_, 0.0f);
+        obs_var_.assign(obs_size_, 1.0f);
+        return true;
     }
     
     // Last resort
@@ -557,6 +586,47 @@ bool RLPolicyJSON::build_encoder_from_json(Activation nonlinearity) {
         encoder_layers_.push_back(layer);
     }
     
+    return true;
+}
+
+bool RLPolicyJSON::build_swarm_encoder_from_json(Activation nonlinearity) {
+    use_swarm_encoder_ = true;
+    swarm_self_goal_layers_.clear();
+    swarm_embedding_layers_.clear();
+    swarm_value_layers_.clear();
+    swarm_attention_layers_.clear();
+    auto load_one = [this, nonlinearity](const std::string& prefix, const std::vector<int>& indices, bool last_has_act) -> std::vector<EncoderLayer> {
+        std::vector<EncoderLayer> layers;
+        for (size_t i = 0; i < indices.size(); i++) {
+            int idx = indices[i];
+            std::string w_key = prefix + std::to_string(idx) + ".weight";
+            std::string b_key = prefix + std::to_string(idx) + ".bias";
+            std::vector<float> w_data, b_data;
+            std::vector<int> w_shape, b_shape;
+            if (!extract_tensor(w_key, w_data, w_shape) || !extract_tensor(b_key, b_data, b_shape) || w_shape.size() != 2)
+                return {};
+            EncoderLayer layer;
+            layer.linear.in_features = w_shape[1];
+            layer.linear.out_features = w_shape[0];
+            layer.activation = (i < indices.size() - 1 || last_has_act) ? nonlinearity : Activation::RELU;
+            layer.linear.weights.resize(w_shape[0]);
+            for (int r = 0; r < w_shape[0]; r++) {
+                layer.linear.weights[r].resize(w_shape[1]);
+                for (int c = 0; c < w_shape[1]; c++)
+                    layer.linear.weights[r][c] = w_data[r * w_shape[1] + c];
+            }
+            layer.linear.bias = b_data;
+            layers.push_back(layer);
+        }
+        return layers;
+    };
+    std::string pre = "actor_encoder.";
+    swarm_self_goal_layers_ = load_one(pre + "self_goal_encoder.", {0, 2}, true);
+    swarm_embedding_layers_ = load_one(pre + "neighbor_encoder.embedding_mlp.", {0, 2}, true);
+    swarm_value_layers_ = load_one(pre + "neighbor_encoder.value_mlp.", {0, 2}, true);
+    swarm_attention_layers_ = load_one(pre + "neighbor_encoder.attention_mlp.", {0, 2, 4}, false);
+    if (swarm_self_goal_layers_.empty() || swarm_embedding_layers_.empty() || swarm_value_layers_.empty() || swarm_attention_layers_.size() != 3u)
+        return false;
     return true;
 }
 
@@ -643,6 +713,16 @@ bool RLPolicyJSON::load_dist_linear_from_json() {
     }
     
     dist_linear_.bias = b_data;
+
+    // Load learned_stddev if present (adaptive_stddev=False)
+    std::string learned_key = "action_parameterization.learned_stddev";
+    std::vector<float> learned_data;
+    std::vector<int> learned_shape;
+    if (extract_tensor(learned_key, learned_data, learned_shape)) {
+        learned_stddev_ = learned_data;
+    } else {
+        learned_stddev_.clear();
+    }
     return true;
 }
 
@@ -655,19 +735,26 @@ bool RLPolicyJSON::load_from_json(const std::string& json_path, Activation nonli
         std::cerr << "Warning: Could not load normalizer, using defaults" << std::endl;
     }
     
-    if (!build_encoder_from_json(nonlinearity)) {
+    if (is_swarm_encoder_json()) {
+        if (!build_swarm_encoder_from_json(nonlinearity)) {
+            std::cerr << "Error: Could not build swarm encoder" << std::endl;
+            return false;
+        }
+    } else if (!build_encoder_from_json(nonlinearity)) {
         std::cerr << "Error: Could not build encoder" << std::endl;
-        return false;
-    }
-    
-    if (!load_gru_from_json()) {
-        std::cerr << "Error: Could not load GRU" << std::endl;
         return false;
     }
     
     if (!load_dist_linear_from_json()) {
         std::cerr << "Error: Could not load distribution linear" << std::endl;
         return false;
+    }
+    
+    if (!load_gru_from_json()) {
+        has_rnn_ = false;
+        gru_hidden_size_ = dist_linear_.in_features;
+        gru_input_size_ = dist_linear_.in_features;
+        std::cerr << "Note: No GRU in checkpoint (use_rnn=False), using encoder output directly" << std::endl;
     }
     
     reset_hidden_state(1);
@@ -700,16 +787,102 @@ std::vector<float> RLPolicyJSON::linear_forward(const LinearLayer& layer, const 
 }
 
 std::vector<float> RLPolicyJSON::encoder_forward(const std::vector<float>& input) const {
+    if (use_swarm_encoder_)
+        return swarm_encoder_forward(input);
     std::vector<float> x = input;
-    
     for (const auto& layer : encoder_layers_) {
         x = linear_forward(layer.linear, x);
         for (float& val : x) {
             val = activation_func(val, layer.activation);
         }
     }
-    
     return x;
+}
+
+std::vector<float> RLPolicyJSON::swarm_encoder_forward(const std::vector<float>& input) const {
+    const int self_obs_dim = 4;
+    const int my_destination_dim = 2;
+    const int single_neighbor_dim = 4;
+    if (input.size() < static_cast<size_t>(self_obs_dim + my_destination_dim))
+        return std::vector<float>(dist_linear_.in_features, 0.0f);
+    size_t idx = 0;
+    std::vector<float> self_obs(input.begin() + idx, input.begin() + idx + self_obs_dim);
+    idx += self_obs_dim;
+    std::vector<float> my_destination(input.begin() + idx, input.begin() + idx + my_destination_dim);
+    idx += my_destination_dim;
+    std::vector<float> neighbor_obs_flat(input.begin() + idx, input.end());
+    int num_neighbors = static_cast<int>(neighbor_obs_flat.size()) / single_neighbor_dim;
+    if (num_neighbors <= 0) {
+        std::vector<float> self_goal_in(self_obs);
+        self_goal_in.insert(self_goal_in.end(), my_destination.begin(), my_destination.end());
+        std::vector<float> self_goal_embed = self_goal_in;
+        for (const auto& layer : swarm_self_goal_layers_) {
+            self_goal_embed = linear_forward(layer.linear, self_goal_embed);
+            for (float& v : self_goal_embed) v = activation_func(v, layer.activation);
+        }
+        std::vector<float> neighbor_embed(swarm_value_layers_.back().linear.out_features, 0.0f);
+        self_goal_embed.insert(self_goal_embed.end(), neighbor_embed.begin(), neighbor_embed.end());
+        return self_goal_embed;
+    }
+    std::vector<float> self_goal_in(self_obs);
+    self_goal_in.insert(self_goal_in.end(), my_destination.begin(), my_destination.end());
+    std::vector<float> self_goal_embed = self_goal_in;
+    for (const auto& layer : swarm_self_goal_layers_) {
+        self_goal_embed = linear_forward(layer.linear, self_goal_embed);
+        for (float& v : self_goal_embed) v = activation_func(v, layer.activation);
+    }
+    int hidden_size = swarm_embedding_layers_.back().linear.out_features;
+    std::vector<float> embeddings;
+    for (int n = 0; n < num_neighbors; n++) {
+        std::vector<float> concat(self_obs);
+        for (int j = 0; j < single_neighbor_dim; j++)
+            concat.push_back(neighbor_obs_flat[n * single_neighbor_dim + j]);
+        std::vector<float> e = concat;
+        for (const auto& layer : swarm_embedding_layers_) {
+            e = linear_forward(layer.linear, e);
+            for (float& v : e) v = activation_func(v, layer.activation);
+        }
+        embeddings.insert(embeddings.end(), e.begin(), e.end());
+    }
+    std::vector<float> values;
+    for (int n = 0; n < num_neighbors; n++) {
+        std::vector<float> e(embeddings.begin() + n * hidden_size, embeddings.begin() + (n + 1) * hidden_size);
+        std::vector<float> v = e;
+        for (const auto& layer : swarm_value_layers_) {
+            v = linear_forward(layer.linear, v);
+            for (float& x : v) x = activation_func(x, layer.activation);
+        }
+        values.insert(values.end(), v.begin(), v.end());
+    }
+    std::vector<float> mean_embed(hidden_size, 0.0f);
+    for (int n = 0; n < num_neighbors; n++)
+        for (int h = 0; h < hidden_size; h++)
+            mean_embed[h] += embeddings[n * hidden_size + h];
+    for (float& v : mean_embed) v /= num_neighbors;
+    std::vector<float> attn_scores;
+    for (int n = 0; n < num_neighbors; n++) {
+        std::vector<float> cat(embeddings.begin() + n * hidden_size, embeddings.begin() + (n + 1) * hidden_size);
+        cat.insert(cat.end(), mean_embed.begin(), mean_embed.end());
+        std::vector<float> a = cat;
+        for (size_t L = 0; L < swarm_attention_layers_.size(); L++) {
+            a = linear_forward(swarm_attention_layers_[L].linear, a);
+            if (L < swarm_attention_layers_.size() - 1)
+                for (float& v : a) v = activation_func(v, swarm_attention_layers_[L].activation);
+        }
+        attn_scores.push_back(a[0]);
+    }
+    float sum_exp = 0.0f;
+    for (float& s : attn_scores) {
+        s = std::exp(std::max(-20.0f, std::min(20.0f, s)));
+        sum_exp += s;
+    }
+    for (float& s : attn_scores) s /= sum_exp;
+    std::vector<float> neighbor_embed(hidden_size, 0.0f);
+    for (int n = 0; n < num_neighbors; n++)
+        for (int h = 0; h < hidden_size; h++)
+            neighbor_embed[h] += attn_scores[n] * values[n * hidden_size + h];
+    self_goal_embed.insert(self_goal_embed.end(), neighbor_embed.begin(), neighbor_embed.end());
+    return self_goal_embed;
 }
 
 std::vector<float> RLPolicyJSON::normalize_obs(const std::vector<float>& obs) const {
@@ -829,22 +1002,35 @@ std::vector<float> RLPolicyJSON::normalize_obs(const std::vector<float>& obs) co
 }
 
 std::vector<float> RLPolicyJSON::forward(const std::vector<float>& obs, bool normalized) {
-    // Normalize observation
-    std::vector<float> x = normalized ? obs : normalize_obs(obs);
+    // Normalize observation (skip when no obs_normalizer in checkpoint)
+    std::vector<float> x;
+    if (normalized || !has_obs_normalizer_) {
+        x = obs;
+    } else {
+        x = normalize_obs(obs);
+    }
     
     // Encoder forward
     x = encoder_forward(x);
     
-    // GRU forward
-    x = gru_forward(x);
+    // GRU forward (skip when has_rnn_ is false)
+    if (has_rnn_)
+        x = gru_forward(x);
     
     // Distribution linear
     std::vector<float> params = linear_forward(dist_linear_, x);
     
-    // Split into mean and logstd, then concatenate
-    int action_dim = params.size() / 2;
-    std::vector<float> mean(params.begin(), params.begin() + action_dim);
-    std::vector<float> logstd(params.begin() + action_dim, params.end());
+    std::vector<float> mean, logstd;
+    if (!learned_stddev_.empty()) {
+        // adaptive_stddev=False: params = mean only, logstd from learned_stddev_
+        mean = params;
+        logstd = learned_stddev_;
+    } else {
+        // adaptive_stddev=True: params = [mean, logstd] concatenated
+        int action_dim = static_cast<int>(params.size()) / 2;
+        mean.assign(params.begin(), params.begin() + action_dim);
+        logstd.assign(params.begin() + action_dim, params.end());
+    }
     
     std::vector<float> action_logits;
     action_logits.insert(action_logits.end(), mean.begin(), mean.end());

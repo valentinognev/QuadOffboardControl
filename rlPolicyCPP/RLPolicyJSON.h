@@ -90,6 +90,22 @@ private:
     int gru_hidden_size_;
     int gru_input_size_;
 
+    // No-RNN path (use_rnn=False): when true, GRU is used; when false, encoder output goes directly to dist head
+    bool has_rnn_;
+
+    // When false, skip obs normalization (match rl_policyClean when checkpoint has no obs_normalizer)
+    bool has_obs_normalizer_;
+
+    // When non-empty, dist_linear outputs mean only; logstd comes from learned_stddev_ (adaptive_stddev=False)
+    std::vector<float> learned_stddev_;
+
+    // Swarm encoder (actor_encoder.*): when true, encoder_forward uses swarm_encoder_forward
+    bool use_swarm_encoder_;
+    std::vector<EncoderLayer> swarm_self_goal_layers_;
+    std::vector<EncoderLayer> swarm_embedding_layers_;
+    std::vector<EncoderLayer> swarm_value_layers_;
+    std::vector<EncoderLayer> swarm_attention_layers_;  // last layer: linear only (no activation)
+
     // Constants
     static constexpr float EPS = 1e-5f;
 
@@ -97,6 +113,7 @@ private:
     float activation_func(float x, Activation act) const;
     std::vector<float> linear_forward(const LinearLayer& layer, const std::vector<float>& input) const;
     std::vector<float> encoder_forward(const std::vector<float>& input) const;
+    std::vector<float> swarm_encoder_forward(const std::vector<float>& input) const;
     std::vector<float> gru_forward(const std::vector<float>& input);  // Non-const because it modifies hxs_
     std::vector<float> normalize_obs(const std::vector<float>& obs) const;
 
@@ -105,7 +122,10 @@ private:
     bool extract_tensor(const std::string& key, std::vector<float>& data, std::vector<int>& shape);
     void extract_flattened_array(std::shared_ptr<JSONValue> val, std::vector<float>& result);
     bool find_mlp_linear_indices(std::vector<int>& indices);
+    bool has_key_in_weights(const std::string& key);
+    bool is_swarm_encoder_json() const;
     bool build_encoder_from_json(Activation nonlinearity);
+    bool build_swarm_encoder_from_json(Activation nonlinearity);
     bool load_gru_from_json();
     bool load_dist_linear_from_json();
     bool load_normalizer_from_json();

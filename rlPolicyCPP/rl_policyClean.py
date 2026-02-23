@@ -88,10 +88,13 @@ class RLPolicyClean(nn.Module):
             h_next: New hidden state [batch, hidden_size]
         """
         # Normalize observation
-        obs = torch.tensor(obs, dtype=torch.float32)
+        if not isinstance(obs, torch.Tensor):
+            obs = torch.tensor(obs, dtype=torch.float32)
+        else:
+            obs = obs.to(dtype=torch.float32)
         if obs.dim() == 1:
             obs = obs.unsqueeze(0)  # [features] -> [1, features]
-        if not normalized:
+        if not normalized and getattr(self, '_has_obs_normalizer', True):
             x = (obs - self.obs_mean) / torch.sqrt(self.obs_var + EPS)
             x = torch.clamp(x, -5.0, 5.0)
         else:
@@ -100,13 +103,14 @@ class RLPolicyClean(nn.Module):
         # Encoder forward (standard PyTorch Sequential)
         x = self.encoder(x)  # [batch, encoder_out]
 
-        # GRU forward (standard PyTorch GRU)
-        # GRU expects [seq_len, batch, features]; hxs is [num_layers, batch, hidden]
+        # GRU forward (or pass-through when no RNN in checkpoint)
+        # Core expects [seq_len, batch, features]; hxs is [num_layers, batch, hidden]
         x = x.unsqueeze(0)  # [batch, features] -> [1, batch, features]
+        hidden_size = self._core_hidden_size()
         if self.hxs is None or self.hxs.shape[1] != x.shape[1]:
-            self.hxs = torch.zeros(1, x.shape[1], self.core.hidden_size, device=x.device)
-        
-        # Standard PyTorch GRU forward
+            self.hxs = torch.zeros(1, x.shape[1], hidden_size, device=x.device)
+
+        # Standard PyTorch GRU forward (or pass-through core when use_rnn=False)
         x, h_next = self.core(x, self.hxs)
         x = x.squeeze(0)  # [1, batch, hidden_size] -> [batch, hidden_size]
         self.hxs = h_next
@@ -116,32 +120,44 @@ class RLPolicyClean(nn.Module):
             x = self.decoder(x)
 
         # Distribution linear forward (standard PyTorch Linear)
-        params = self.dist_linear(x)  # [batch, 2*action_dim]
+        params = self.dist_linear(x)  # [batch, action_dim] or [batch, 2*action_dim]
         
-        # Split into mean and logstd, then concatenate (standard PyTorch operations)
-        mean, logstd = params.chunk(2, dim=-1)
-        action_logits = torch.cat([mean, logstd], dim=-1)
+        # When learned_stddev exists (adaptive_stddev=False): params=mean only, logstd from learned_stddev
+        if self.learned_stddev is not None:
+            mean = params
+            logstd = self.learned_stddev.unsqueeze(0).expand(mean.shape[0], -1)
+            action_logits = torch.cat([mean, logstd], dim=-1)
+        else:
+            # Adaptive stddev: params = [mean, logstd] concatenated
+            mean, logstd = params.chunk(2, dim=-1)
+            action_logits = torch.cat([mean, logstd], dim=-1)
         
         # Return h_next in [batch, hidden_size] format for consistency with C++
         h_next = h_next.squeeze(0)  # [1, batch, hidden_size] -> [batch, hidden_size]
         return action_logits, h_next
 
     def _init_modules(self, obs_mean: torch.Tensor, obs_var: torch.Tensor,
-                       encoder: nn.Module, core: nn.GRU, dist_linear: nn.Linear,
-                       decoder: nn.Module | None = None):
+                       encoder: nn.Module, core: nn.Module, dist_linear: nn.Linear,
+                       decoder: nn.Module | None = None, learned_stddev: torch.Tensor | None = None):
         self.obs_mean = nn.Parameter(obs_mean.float(), requires_grad=False)
         self.obs_var = nn.Parameter(obs_var.float(), requires_grad=False)
         self.encoder = encoder
         self.core = core
         self.decoder = decoder
         self.dist_linear = dist_linear
+        self.learned_stddev = nn.Parameter(learned_stddev.float(), requires_grad=False) if learned_stddev is not None else None
         self.hxs = None
+
+    def _core_hidden_size(self) -> int:
+        """Hidden size of the core (GRU or pass-through)."""
+        return getattr(self.core, 'hidden_size', self.dist_linear.weight.shape[1])
 
     def reset_hidden_state(self, batch_size: int = 1, device: torch.device | None = None) -> None:
         """Reset internal RNN state to zeros for the given batch size."""
         if device is None:
             device = next(self.parameters()).device
-        self.hxs = torch.zeros(1, batch_size, self.core.hidden_size, device=device)
+        hidden_size = self._core_hidden_size()
+        self.hxs = torch.zeros(1, batch_size, hidden_size, device=device)
 
     def set_hidden_state(self, hxs: torch.Tensor) -> None:
         """Set internal RNN state to match external state.
@@ -157,6 +173,22 @@ class RLPolicyClean(nn.Module):
             self.hxs = hxs.clone()
 
     @staticmethod
+    def _make_pass_through_core(hidden_size: int, device: str = 'cpu') -> nn.Module:
+        """Create a pass-through 'core' when checkpoint has no RNN (use_rnn=False).
+        Behaves like a GRU for API: forward(x, h) -> (x, h). hidden_size matches encoder output.
+        """
+        class _PassThroughCore(nn.Module):
+            def __init__(self, size: int):
+                super().__init__()
+                self.hidden_size = size
+
+            def forward(self, x: torch.Tensor, h: torch.Tensor):
+                return x, h
+
+        core = _PassThroughCore(hidden_size)
+        return core.to(device)
+
+    @staticmethod
     def _activation(nonlinearity: str) -> nn.Module:
         if nonlinearity == 'relu':
             return nn.ReLU(inplace=False)
@@ -165,6 +197,106 @@ class RLPolicyClean(nn.Module):
         if nonlinearity == 'tanh':
             return nn.Tanh()
         raise RuntimeError(f"Unsupported nonlinearity: {nonlinearity}")
+
+    @staticmethod
+    def _has_rnn(ckpt: dict) -> bool:
+        """True if checkpoint contains GRU core weights."""
+        return 'core.core.weight_hh_l0' in ckpt
+
+    @staticmethod
+    def _is_swarm_encoder_ckpt(ckpt: dict) -> bool:
+        """True if checkpoint uses actor_encoder (swarm attention) instead of encoder.encoders.obs.mlp_head."""
+        return 'actor_encoder.self_goal_encoder.0.weight' in ckpt
+
+    @staticmethod
+    def _build_swarm_encoder_from_ckpt(ckpt: dict, *, nonlinearity: str) -> nn.Module:
+        """Build encoder from actor_encoder.* (SwarmAttentionEncoder) state dict.
+        Obs layout: [self_obs (4)] [my_destination_rel (2)] [neighbor_obs ((max_agents-1)*4)].
+        """
+        act = RLPolicyClean._activation(nonlinearity)
+        prefix = 'actor_encoder.'
+
+        def load_sequential(ckpt: dict, key_prefix: str, layer_indices: list[int], last_has_act: bool = True) -> nn.Sequential:
+            layers: list[nn.Module] = []
+            for i, idx in enumerate(layer_indices):
+                w = ckpt[f'{key_prefix}{idx}.weight']
+                b = ckpt[f'{key_prefix}{idx}.bias']
+                lin = nn.Linear(w.shape[1], w.shape[0])
+                lin.weight.data.copy_(w)
+                lin.bias.data.copy_(b)
+                layers.append(lin)
+                if i < len(layer_indices) - 1 or last_has_act:
+                    layers.append(act)
+            return nn.Sequential(*layers)
+
+        # self_goal_encoder: 0, 2 (Linear layers)
+        self_goal_encoder = load_sequential(ckpt, prefix + 'self_goal_encoder.', [0, 2])
+        # neighbor: embedding_mlp 0,2; value_mlp 0,2; attention_mlp 0,2,4 (last layer is logits, no act)
+        embedding_mlp = load_sequential(ckpt, prefix + 'neighbor_encoder.embedding_mlp.', [0, 2])
+        value_mlp = load_sequential(ckpt, prefix + 'neighbor_encoder.value_mlp.', [0, 2])
+        attention_mlp = load_sequential(ckpt, prefix + 'neighbor_encoder.attention_mlp.', [0, 2, 4], last_has_act=False)
+
+        self_obs_dim = 4
+        my_destination_rel_dim = 2
+        single_neighbor_dim = 4
+        hidden_size = ckpt[prefix + 'self_goal_encoder.0.weight'].shape[0]
+        num_neighbors = ckpt[prefix + 'neighbor_encoder.embedding_mlp.0.weight'].shape[1] - self_obs_dim  # 8 - 4 = 4 -> wrong. Actually in_dim = self_obs_dim + single_neighbor_dim = 4+4=8. So we can't get num_neighbors from that. From attention_mlp.4.weight we have out 1. So we need num_neighbors from somewhere. It's (obs_dim - 6) // 4. So we'll get it from the wrapper which receives obs.
+
+        class _SwarmNeighborEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embedding_mlp = embedding_mlp
+                self.value_mlp = value_mlp
+                self.attention_mlp = attention_mlp
+                self.self_obs_dim = self_obs_dim
+                self.single_neighbor_dim = single_neighbor_dim
+                self.hidden_size = hidden_size
+
+            def forward(self, self_obs: torch.Tensor, neighbor_obs_flat: torch.Tensor, batch_size: int) -> torch.Tensor:
+                num_n = neighbor_obs_flat.shape[1] // self.single_neighbor_dim
+                if num_n == 0:
+                    return torch.zeros(batch_size, self.hidden_size, device=self_obs.device, dtype=self_obs.dtype)
+                neighbor_obs = neighbor_obs_flat.reshape(-1, self.single_neighbor_dim)
+                self_obs_rep = self_obs.repeat(num_n, 1)
+                mlp_in = torch.cat((self_obs_rep, neighbor_obs), dim=1)
+                embeddings = self.embedding_mlp(mlp_in)
+                values = self.value_mlp(embeddings)
+                embeddings_grp = embeddings.reshape(batch_size, -1, self.hidden_size)
+                mean_emb = embeddings_grp.mean(dim=1)
+                mean_emb_rep = mean_emb.repeat(num_n, 1)
+                attn_in = torch.cat((embeddings, mean_emb_rep), dim=1)
+                attn_scores = self.attention_mlp(attn_in).view(batch_size, -1)
+                attn_weights = F.softmax(attn_scores, dim=1).view(-1, 1)
+                weighted = (attn_weights * values).view(batch_size, -1, self.hidden_size)
+                return weighted.sum(dim=1)
+
+        neighbor_encoder = _SwarmNeighborEncoder()
+
+        class _SwarmEncoderFlat(nn.Module):
+            """Swarm encoder that takes flat obs [batch, 6 + num_neighbors*4] and outputs [batch, 512]."""
+
+            def __init__(self):
+                super().__init__()
+                self.self_goal_encoder = self_goal_encoder
+                self.neighbor_encoder = neighbor_encoder
+                self.self_obs_dim = self_obs_dim
+                self.my_destination_rel_dim = my_destination_rel_dim
+                self.single_neighbor_dim = single_neighbor_dim
+
+            def forward(self, obs: torch.Tensor) -> torch.Tensor:
+                batch_size = obs.shape[0]
+                idx = 0
+                self_obs = obs[:, idx:idx + self.self_obs_dim]
+                idx += self.self_obs_dim
+                my_destination_rel = obs[:, idx:idx + self.my_destination_rel_dim]
+                idx += self.my_destination_rel_dim
+                neighbor_obs = obs[:, idx:]
+                self_goal_in = torch.cat((self_obs, my_destination_rel), dim=1)
+                self_goal_embed = self.self_goal_encoder(self_goal_in)
+                neighbor_embed = self.neighbor_encoder(self_obs, neighbor_obs, batch_size)
+                return torch.cat((self_goal_embed, neighbor_embed), dim=1)
+
+        return _SwarmEncoderFlat()
 
     @staticmethod
     def _find_mlp_linear_indices(ckpt: dict) -> list[int]:
@@ -231,46 +363,56 @@ class RLPolicyClean(nn.Module):
             jit_encoder: if True, torch.jit.script the encoder MLP
         """
         ckpt = torch.load(path, map_location=device, weights_only=False)["model"]
+        has_rnn = cls._has_rnn(ckpt)
+        is_swarm = cls._is_swarm_encoder_ckpt(ckpt)
 
         # Observation normalizer parameters (RunningMeanStd)
         mean_key = 'obs_normalizer.running_mean_std.running_mean_std.obs.running_mean'
         var_key = 'obs_normalizer.running_mean_std.running_mean_std.obs.running_var'
-        if mean_key in ckpt and var_key in ckpt:
+        has_obs_normalizer = mean_key in ckpt and var_key in ckpt
+        if has_obs_normalizer:
             obs_mean = ckpt[mean_key].detach()
             obs_var = ckpt[var_key].detach()
         else:
-            # Fallback: infer input size from the first linear layer if present, otherwise 1
-            indices = [0]
-            try:
-                indices = RLPolicyClean._find_mlp_linear_indices(ckpt)
-            except Exception:
-                pass
-            if len(indices) > 0:
-                first_w = ckpt[f'encoder.encoders.obs.mlp_head.{indices[0]}.weight']
-                in_size = first_w.shape[1]
+            in_size = 1
+            if is_swarm:
+                # Obs layout: self_obs (4) + my_destination_rel (2) + neighbor_obs ((max_agents-1)*4)
+                in_size = 6 + 3 * 4  # default max_agents=4 -> 18
             else:
-                in_size = 1
+                try:
+                    indices = cls._find_mlp_linear_indices(ckpt)
+                    if len(indices) > 0:
+                        first_w = ckpt[f'encoder.encoders.obs.mlp_head.{indices[0]}.weight']
+                        in_size = first_w.shape[1]
+                except Exception:
+                    pass
             obs_mean = torch.zeros(in_size)
             obs_var = torch.ones(in_size)
 
-        # Build encoder dynamically from checkpoint
-        encoder = cls._build_encoder_from_ckpt(ckpt, nonlinearity=nonlinearity, jit=jit_encoder)
+        # Build encoder: swarm (actor_encoder) or default MLP (encoder.encoders.obs.mlp_head)
+        if is_swarm:
+            encoder = cls._build_swarm_encoder_from_ckpt(ckpt, nonlinearity=nonlinearity)
+        else:
+            encoder = cls._build_encoder_from_ckpt(ckpt, nonlinearity=nonlinearity, jit=jit_encoder)
 
-        # Determine GRU input size from the last linear layer out_features or keep 512 default
-        gru_input_size = 512
-        lin_indices = cls._find_mlp_linear_indices(ckpt)
-        if len(lin_indices) > 0:
-            last_idx = lin_indices[-1]
-            last_w = ckpt[f'encoder.encoders.obs.mlp_head.{last_idx}.weight']
-            gru_input_size = last_w.shape[0]
-
-        # GRU core (hidden size inferred from checkpoint)
-        rnn_size = ckpt['core.core.weight_hh_l0'].shape[1]
-        core = nn.GRU(input_size=gru_input_size, hidden_size=rnn_size, batch_first=False)
-        core.weight_ih_l0.data.copy_(ckpt['core.core.weight_ih_l0'])
-        core.weight_hh_l0.data.copy_(ckpt['core.core.weight_hh_l0'])
-        core.bias_ih_l0.data.copy_(ckpt['core.core.bias_ih_l0'])
-        core.bias_hh_l0.data.copy_(ckpt['core.core.bias_hh_l0'])
+        # Core: GRU when present, else pass-through (use_rnn=False)
+        dist_in = ckpt['action_parameterization.distribution_linear.weight'].shape[1]
+        dist_out = ckpt['action_parameterization.distribution_linear.weight'].shape[0]
+        if has_rnn:
+            gru_input_size = 512
+            lin_indices = cls._find_mlp_linear_indices(ckpt)
+            if len(lin_indices) > 0:
+                last_idx = lin_indices[-1]
+                last_w = ckpt[f'encoder.encoders.obs.mlp_head.{last_idx}.weight']
+                gru_input_size = last_w.shape[0]
+            rnn_size = ckpt['core.core.weight_hh_l0'].shape[1]
+            core = nn.GRU(input_size=gru_input_size, hidden_size=rnn_size, batch_first=False)
+            core.weight_ih_l0.data.copy_(ckpt['core.core.weight_ih_l0'])
+            core.weight_hh_l0.data.copy_(ckpt['core.core.weight_hh_l0'])
+            core.bias_ih_l0.data.copy_(ckpt['core.core.bias_ih_l0'])
+            core.bias_hh_l0.data.copy_(ckpt['core.core.bias_hh_l0'])
+        else:
+            core = cls._make_pass_through_core(dist_in, device)
 
         # Identity decoder
         class _Identity(nn.Module):
@@ -279,15 +421,18 @@ class RLPolicyClean(nn.Module):
 
         decoder = _Identity()
 
-        # Distribution head: [mean, logstd]
-        dist_in = ckpt['action_parameterization.distribution_linear.weight'].shape[1]
-        num_of_actions = ckpt['action_parameterization.distribution_linear.weight'].shape[0]
-        dist_linear = nn.Linear(dist_in, num_of_actions)
+        # Distribution head: [mean, logstd] or mean + learned_stddev
+        learned_stddev = None
+        if 'action_parameterization.learned_stddev' in ckpt:
+            # Non-adaptive: dist_linear outputs mean only, learned_stddev provides log(stddev)
+            learned_stddev = ckpt['action_parameterization.learned_stddev'].detach()
+        dist_linear = nn.Linear(dist_in, dist_out)
         dist_linear.weight.data.copy_(ckpt['action_parameterization.distribution_linear.weight'])
         dist_linear.bias.data.copy_(ckpt['action_parameterization.distribution_linear.bias'])
 
         policy = cls().to(device)
-        policy._init_modules(obs_mean, obs_var, encoder, core, dist_linear, decoder)
+        policy._init_modules(obs_mean, obs_var, encoder, core, dist_linear, decoder, learned_stddev=learned_stddev)
+        policy._has_obs_normalizer = has_obs_normalizer
         return policy
 
 
@@ -318,7 +463,7 @@ if __name__ == "__main__":
         obs = torch.zeros(1, in_size, device=args.device)
         policy.reset_hidden_state(batch_size=1, device=torch.device(args.device))
 
-        action_logits = policy(obs, normalized=args.normalized)
+        action_logits, h_next = policy(obs, normalized=args.normalized)
         print("action_logits shape:", tuple(action_logits.shape))
         print("hidden state shape:", tuple(policy.hxs.shape))
         print("action_logits (first row):", action_logits[0].tolist())

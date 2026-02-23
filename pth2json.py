@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Convert PyTorch .pth files to JSON format for C++ consumption.
@@ -167,18 +166,22 @@ def pth_to_json(pth_path, json_path=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
+        usage='usage: pth2json.py [-h] --pth=pthfilepath [json_path]',
         description='Convert PyTorch .pth files to JSON format for C++ consumption.\n'
                     'Stores tensor data along with shape and dtype information as base64-encoded bytes.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Examples:\n'
-               '  python pth2json.py model.pth\n'
-               '  python pth2json.py model.pth output.json\n'
+               '  python pth2json.py --pth=model.pth\n'
+               '  python pth2json.py --pth=model.pth output.json\n'
                '  python pth2json.py --help  # Show this help message',
         add_help=True
     )
     parser.add_argument(
-        'pth_path',
+        '--pth',
+        dest='pth_path',
         type=str,
+        required=True,
+        metavar='pthfilepath',
         help='Path to the input .pth file'
     )
     parser.add_argument(
@@ -189,8 +192,8 @@ if __name__ == '__main__':
         help='Path to the output .json file (optional, defaults to input filename with .json extension)'
     )
     
-    # Show help if no arguments provided
-    if len(sys.argv) == 1:
+    # Show help if no arguments or --help / -h
+    if len(sys.argv) == 1 or '--help' in sys.argv or '-h' in sys.argv:
         parser.print_help()
         sys.exit(0)
     

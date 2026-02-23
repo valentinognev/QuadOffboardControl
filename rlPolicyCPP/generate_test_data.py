@@ -108,29 +108,28 @@ def load_environment(env_file_path):
     # Sort by relevance: classes ending with 'Env' first
     candidate_classes.sort(key=lambda x: (not x[0].endswith('Env'), x[0]))
     
-    # Try to instantiate each candidate
+    # Try to instantiate each candidate (support multiple Sample Factory env signatures)
+    _instantiation_tries = [
+        ("full_env_name, cfg, env_config", lambda o: o(full_env_name="test_env", cfg=None, env_config=None)),
+        ("full_env_name, cfg", lambda o: o(full_env_name="test_env", cfg=None)),
+        ("full_env_name, cfg, render_mode", lambda o: o(full_env_name="test_env", cfg=None, render_mode=None)),
+        ("no args", lambda o: o()),
+    ]
     for name, obj in candidate_classes:
-        # Try with full_env_name parameter (Sample Factory style)
-        try:
-            test_env = obj(full_env_name="test_env", cfg=None, env_config=None)
-            if hasattr(test_env, 'observation_space') and hasattr(test_env, 'action_space'):
-                env_class = obj
-                env_class_name = name
-                break
-        except TypeError:
-            # Try without parameters
+        for sig_name, try_fn in _instantiation_tries:
             try:
-                test_env = obj()
+                test_env = try_fn(obj)
                 if hasattr(test_env, 'observation_space') and hasattr(test_env, 'action_space'):
                     env_class = obj
                     env_class_name = name
                     break
+            except TypeError:
+                continue
             except Exception as e:
                 last_error = e
                 continue
-        except Exception as e:
-            last_error = e
-            continue
+        if env_class is not None:
+            break
     
     if env_class is None:
         # List available classes for debugging
@@ -149,15 +148,17 @@ def load_environment(env_file_path):
         raise ValueError(error_msg)
     
     print(f"  Found environment class: {env_class_name}")
-    
-    # Create environment instance (we already tested instantiation above, but create fresh one)
-    try:
-        # Try with full_env_name parameter (Sample Factory style)
-        env = env_class(full_env_name="test_env", cfg=None, env_config=None)
-    except TypeError:
-        # Try without parameters
-        env = env_class()
-    
+
+    # Create environment instance (same signature set as above)
+    for _sig_name, try_fn in _instantiation_tries:
+        try:
+            env = try_fn(env_class)
+            break
+        except (TypeError, Exception):
+            continue
+    else:
+        raise ValueError(f"Could not instantiate {env_class_name} with any known signature")
+
     return env
 
 
@@ -175,9 +176,12 @@ def generate_test_observations(observation_space, num_samples=100, method='unifo
     if not hasattr(observation_space, 'low') or not hasattr(observation_space, 'high'):
         raise ValueError("Observation space must be a Box space with low/high bounds")
     
-    low = observation_space.low
-    high = observation_space.high
+    low = np.array(observation_space.low, dtype=np.float32)
+    high = np.array(observation_space.high, dtype=np.float32)
     obs_dim = observation_space.shape[0] if hasattr(observation_space, 'shape') else len(low)
+    # Handle unbounded Box: replace -inf/inf with finite fallback for sampling
+    low = np.where(np.isfinite(low), low, -10.0)
+    high = np.where(np.isfinite(high), high, 10.0)
     
     if method == 'uniform':
         # Generate uniform random samples within bounds
