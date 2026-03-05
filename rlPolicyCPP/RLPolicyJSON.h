@@ -101,6 +101,8 @@ private:
 
     // Swarm encoder (actor_encoder.*): when true, encoder_forward uses swarm_encoder_forward
     bool use_swarm_encoder_;
+    int swarm_self_obs_dim_;
+    int swarm_my_destination_dim_;
     std::vector<EncoderLayer> swarm_self_goal_layers_;
     std::vector<EncoderLayer> swarm_embedding_layers_;
     std::vector<EncoderLayer> swarm_value_layers_;

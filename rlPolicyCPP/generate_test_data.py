@@ -10,7 +10,7 @@ This program:
 5. Saves observations and actions to a file for rlPolicyCPP to use
 
 Usage:
-    python generate_test_data.py --pth=<checkpoint.pth> --env=<env_file.py> --output=<test_data.txt> [options]
+    python generate_test_data.py --pth=<path> --env=<path> [--output=<path>] [--samples=<N>] [--method=<uniform|grid>] [--nonlinearity=<relu|elu|tanh>] [--device=<cpu|cuda>] [--no-actions] [--normalized]
 """
 
 import sys
@@ -50,15 +50,20 @@ def load_environment(env_file_path):
         raise FileNotFoundError(f"Environment file not found: {env_file_path}")
     
     # Add necessary paths to sys.path for imports
-    # Find the 'src' directory by navigating up from the environment file
-    # This allows Quadcopter_SimCon and other modules to be imported
+    # 1) Find 'src' directory by navigating up from the environment file
+    # 2) Find directory containing Quadcopter_SimCon (project root) for Quadcopter_SimCon imports
     current_path = env_file_path.parent
     src_dir = None
-    max_depth = 10  # Prevent infinite loop
+    quad_simcon_root = None
+    max_depth = 15  # Prevent infinite loop
     depth = 0
     while depth < max_depth and current_path != current_path.parent:
         if current_path.name == 'src':
             src_dir = current_path
+        # Check if this directory contains Quadcopter_SimCon (parent of Quadcopter_SimCon package)
+        quad_simcon_dir = current_path / 'Quadcopter_SimCon'
+        if quad_simcon_dir.is_dir() and (quad_simcon_dir / 'Simulation').is_dir():
+            quad_simcon_root = current_path
             break
         current_path = current_path.parent
         depth += 1
@@ -66,6 +71,10 @@ def load_environment(env_file_path):
     if src_dir is not None:
         if str(src_dir) not in sys.path:
             sys.path.insert(0, str(src_dir))
+    if quad_simcon_root is not None:
+        if str(quad_simcon_root) not in sys.path:
+            sys.path.insert(0, str(quad_simcon_root))
+            print(f"  Added to path (Quadcopter_SimCon root): {quad_simcon_root}")
     
     # Also add the environment file's parent directory
     if str(env_file_path.parent) not in sys.path:
@@ -303,16 +312,17 @@ def main():
     parser = argparse.ArgumentParser(
         description='Generate test observations and actions for rlPolicyCPP validation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage='%(prog)s --pth=<path> --env=<path> [--output=<path>] [--samples=<N>] [--method=<uniform|grid>] [--nonlinearity=<relu|elu|tanh>] [--device=<cpu|cuda>] [--no-actions] [--normalized]',
         epilog="""
 Examples:
   # Output file will be created in same directory as .pth file with name based on .pth file
-  python generate_test_data.py --pth=checkpoint.pth --env=point_trajectory_env.py
+  %(prog)s --pth=checkpoint.pth --env=point_trajectory_env.py
   # Creates: checkpoint_test_data.txt in same directory as checkpoint.pth
-  
-  python generate_test_data.py --pth=checkpoint.pth --env=point_trajectory_env.py --samples=200 --method=grid
-  
+
+  %(prog)s --pth=checkpoint.pth --env=point_trajectory_env.py --samples=200 --method=grid
+
   # Specify custom extension (file name still based on .pth file)
-  python generate_test_data.py --pth=checkpoint.pth --env=point_trajectory_env.py --output=.dat
+  %(prog)s --pth=checkpoint.pth --env=point_trajectory_env.py --output=.dat
   # Creates: checkpoint_test_data.dat in same directory as checkpoint.pth
         """
     )
@@ -408,12 +418,13 @@ Examples:
     if obs_dim != policy_obs_dim:
         print(f"\nWarning: Observation dimension mismatch!")
         print(f"  Environment: {obs_dim}, Policy: {policy_obs_dim}")
-        print(f"  Using policy observation dimension: {policy_obs_dim}")
+        # For swarm encoder: env defines structure (self+dest+neighbors*4); prefer env when smaller
+        use_dim = min(obs_dim, policy_obs_dim) if obs_dim < policy_obs_dim else policy_obs_dim
+        print(f"  Using observation dimension: {use_dim}")
         # Adjust observation space bounds if needed
         if hasattr(env.observation_space, 'low'):
-            # Create a compatible observation space
-            low = env.observation_space.low[:policy_obs_dim] if len(env.observation_space.low) >= policy_obs_dim else np.pad(env.observation_space.low, (0, policy_obs_dim - len(env.observation_space.low)), constant_values=-1.0)
-            high = env.observation_space.high[:policy_obs_dim] if len(env.observation_space.high) >= policy_obs_dim else np.pad(env.observation_space.high, (0, policy_obs_dim - len(env.observation_space.high)), constant_values=1.0)
+            low = env.observation_space.low[:use_dim] if len(env.observation_space.low) >= use_dim else np.pad(env.observation_space.low, (0, use_dim - len(env.observation_space.low)), constant_values=-1.0)
+            high = env.observation_space.high[:use_dim] if len(env.observation_space.high) >= use_dim else np.pad(env.observation_space.high, (0, use_dim - len(env.observation_space.high)), constant_values=1.0)
             from gymnasium import spaces
             obs_space = spaces.Box(low=low, high=high, dtype=np.float32)
         else:

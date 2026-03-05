@@ -211,7 +211,8 @@ class RLPolicyClean(nn.Module):
     @staticmethod
     def _build_swarm_encoder_from_ckpt(ckpt: dict, *, nonlinearity: str) -> nn.Module:
         """Build encoder from actor_encoder.* (SwarmAttentionEncoder) state dict.
-        Obs layout: [self_obs (4)] [my_destination_rel (2)] [neighbor_obs ((max_agents-1)*4)].
+        Obs layout: [self_obs] [my_destination_rel] [neighbor_obs ((max_agents-1)*4)].
+        Dimensions are inferred from checkpoint weights.
         """
         act = RLPolicyClean._activation(nonlinearity)
         prefix = 'actor_encoder.'
@@ -236,9 +237,12 @@ class RLPolicyClean(nn.Module):
         value_mlp = load_sequential(ckpt, prefix + 'neighbor_encoder.value_mlp.', [0, 2])
         attention_mlp = load_sequential(ckpt, prefix + 'neighbor_encoder.attention_mlp.', [0, 2, 4], last_has_act=False)
 
-        self_obs_dim = 4
-        my_destination_rel_dim = 2
+        # Infer obs layout from checkpoint (supports both 2+2 and 4+2 self_goal layouts)
         single_neighbor_dim = 4
+        self_goal_in_dim = ckpt[prefix + 'self_goal_encoder.0.weight'].shape[1]
+        embedding_in_dim = ckpt[prefix + 'neighbor_encoder.embedding_mlp.0.weight'].shape[1]
+        self_obs_dim = embedding_in_dim - single_neighbor_dim
+        my_destination_rel_dim = self_goal_in_dim - self_obs_dim
         hidden_size = ckpt[prefix + 'self_goal_encoder.0.weight'].shape[0]
         num_neighbors = ckpt[prefix + 'neighbor_encoder.embedding_mlp.0.weight'].shape[1] - self_obs_dim  # 8 - 4 = 4 -> wrong. Actually in_dim = self_obs_dim + single_neighbor_dim = 4+4=8. So we can't get num_neighbors from that. From attention_mlp.4.weight we have out 1. So we need num_neighbors from somewhere. It's (obs_dim - 6) // 4. So we'll get it from the wrapper which receives obs.
 
@@ -273,7 +277,7 @@ class RLPolicyClean(nn.Module):
         neighbor_encoder = _SwarmNeighborEncoder()
 
         class _SwarmEncoderFlat(nn.Module):
-            """Swarm encoder that takes flat obs [batch, 6 + num_neighbors*4] and outputs [batch, 512]."""
+            """Swarm encoder that takes flat obs [batch, self_obs+my_dest+num_neighbors*4] and outputs [batch, 512]."""
 
             def __init__(self):
                 super().__init__()
@@ -392,6 +396,17 @@ class RLPolicyClean(nn.Module):
         # Build encoder: swarm (actor_encoder) or default MLP (encoder.encoders.obs.mlp_head)
         if is_swarm:
             encoder = cls._build_swarm_encoder_from_ckpt(ckpt, nonlinearity=nonlinearity)
+            # Swarm encoder expects obs layout [self_obs][my_dest][neighbors*4]; truncate obs_mean/var if needed
+            self_goal_in = ckpt['actor_encoder.self_goal_encoder.0.weight'].shape[1]
+            single_neighbor = 4
+            # Valid obs dim = self_goal_in + n*4 for some n
+            orig_len = obs_mean.shape[0]
+            if orig_len > self_goal_in:
+                remainder = (orig_len - self_goal_in) % single_neighbor
+                if remainder != 0:
+                    valid_len = self_goal_in + ((orig_len - self_goal_in) // single_neighbor) * single_neighbor
+                    obs_mean = obs_mean[:valid_len].clone()
+                    obs_var = obs_var[:valid_len].clone()
         else:
             encoder = cls._build_encoder_from_ckpt(ckpt, nonlinearity=nonlinearity, jit=jit_encoder)
 

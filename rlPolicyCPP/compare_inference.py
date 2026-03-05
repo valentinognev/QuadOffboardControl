@@ -81,12 +81,29 @@ def run_rl_policy_clean(ckpt: str, observations, device: str = "cpu", normalized
     return __import__("numpy").array(actions)
 
 
+def _infer_experiment_dir_from_ckpt(ckpt: str) -> str | None:
+    """Infer experiment dir from checkpoint path (e.g. .../swarm_3d_v4_hyb_new_obs/checkpoint_p0/xxx.pth -> .../swarm_3d_v4_hyb_new_obs)."""
+    from pathlib import Path
+    p = Path(ckpt).resolve()
+    # Checkpoint is typically in experiment_name/checkpoint_p0/ or experiment_name/checkpoint_*/
+    if p.parent.name.startswith("checkpoint_"):
+        exp_dir = p.parent.parent
+        if exp_dir.is_dir() and (exp_dir / "swarm_encoder.py").exists():
+            return str(exp_dir)
+    return None
+
+
 def run_sf_reference(ckpt: str, observations, device: str = "cpu", normalized: bool = False,
                      train_dir: str | None = None, experiment: str = "swarm_3d_v4_hyb"):
     """Run Sample Factory inference on observations."""
     if _SF_DIR not in sys.path:
         sys.path.insert(0, _SF_DIR)
-    if os.path.isdir(_SWARM_TRAIN_DIR) and _SWARM_TRAIN_DIR not in sys.path:
+    # Prefer experiment dir inferred from checkpoint (has matching swarm_encoder for that checkpoint)
+    exp_dir = _infer_experiment_dir_from_ckpt(ckpt)
+    if exp_dir and exp_dir not in sys.path:
+        sys.path.insert(0, exp_dir)
+        print(f"  Using encoder from checkpoint dir: {exp_dir}")
+    elif os.path.isdir(_SWARM_TRAIN_DIR) and _SWARM_TRAIN_DIR not in sys.path:
         sys.path.insert(0, _SWARM_TRAIN_DIR)
 
     import torch
@@ -98,6 +115,13 @@ def run_sf_reference(ckpt: str, observations, device: str = "cpu", normalized: b
     from sample_factory.cfg.arguments import load_from_checkpoint
 
     # Register and get config (same as inference_sf_reference)
+    # Infer train_dir/experiment from checkpoint path when experiment dir was found
+    exp_dir = _infer_experiment_dir_from_ckpt(ckpt)
+    if exp_dir and train_dir is None:
+        from pathlib import Path
+        train_dir = str(Path(exp_dir).parent)
+        experiment = Path(exp_dir).name
+
     try:
         from train_swarm_envhyb import register_custom_components, parse_custom_args, make_swarm_circle_env_func
         register_custom_components()
@@ -107,7 +131,8 @@ def run_sf_reference(ckpt: str, observations, device: str = "cpu", normalized: b
         from sample_factory.utils.attr_dict import AttrDict
         from swarm_encoder import make_swarm_encoder
         global_model_factory().register_encoder_factory(make_swarm_encoder)
-        config_path = os.path.join(_SWARM_TRAIN_DIR, "config.json")
+        config_dir = exp_dir if exp_dir and os.path.isdir(exp_dir) else _SWARM_TRAIN_DIR
+        config_path = os.path.join(config_dir, "config.json")
         cfg = AttrDict(json.load(open(config_path))) if os.path.isfile(config_path) else AttrDict(
             use_rnn=False, rnn_size=256, rnn_num_layers=1, rnn_type="gru",
             actor_critic_share_weights=False, adaptive_stddev=False, max_agents=4,
@@ -149,7 +174,10 @@ def run_sf_reference(ckpt: str, observations, device: str = "cpu", normalized: b
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare rl_policyClean vs inference_sf_reference")
+    parser = argparse.ArgumentParser(
+        description="Compare rl_policyClean vs inference_sf_reference",
+        usage="%(prog)s --test_data=<path> --ckpt=<path> [--device=<cpu|cuda>] [--normalized] [--train_dir=<path>] [--experiment=<name>]",
+    )
     parser.add_argument("--test_data", type=str, required=True, help="Path to test data file")
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint .pth")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])

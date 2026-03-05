@@ -242,7 +242,7 @@ public:
     }
 };
 
-RLPolicyJSON::RLPolicyJSON() : obs_size_(0), action_size_(0), gru_hidden_size_(0), gru_input_size_(0), has_rnn_(true), has_obs_normalizer_(true), use_swarm_encoder_(false) {
+RLPolicyJSON::RLPolicyJSON() : obs_size_(0), action_size_(0), gru_hidden_size_(0), gru_input_size_(0), has_rnn_(true), has_obs_normalizer_(true), use_swarm_encoder_(false), swarm_self_obs_dim_(4), swarm_my_destination_dim_(2) {
     json_data_ = std::make_shared<JSONValue>();
 }
 
@@ -508,8 +508,25 @@ bool RLPolicyJSON::load_normalizer_from_json() {
         extract_tensor(var_key, var_data, var_shape)) {
         obs_mean_ = mean_data;
         obs_var_ = var_data;
-        obs_size_ = mean_shape.empty() ? mean_data.size() : mean_shape[0];
+        obs_size_ = mean_shape.empty() ? static_cast<int>(mean_data.size()) : mean_shape[0];
         has_obs_normalizer_ = true;
+        // For swarm encoder: truncate if obs_mean length doesn't match encoder structure (self_goal + n*4)
+        if (is_swarm_encoder_json() && obs_size_ > 0) {
+            std::vector<float> self_goal_w;
+            std::vector<int> self_goal_shape;
+            if (extract_tensor("actor_encoder.self_goal_encoder.0.weight", self_goal_w, self_goal_shape) &&
+                self_goal_shape.size() >= 2) {
+                int self_goal_in = self_goal_shape[1];
+                const int single_neighbor = 4;
+                int remainder = (obs_size_ - self_goal_in) % single_neighbor;
+                if (remainder != 0) {
+                    int valid_len = self_goal_in + ((obs_size_ - self_goal_in) / single_neighbor) * single_neighbor;
+                    obs_mean_.resize(valid_len);
+                    obs_var_.resize(valid_len);
+                    obs_size_ = valid_len;
+                }
+            }
+        }
         return true;
     }
     
@@ -528,7 +545,18 @@ bool RLPolicyJSON::load_normalizer_from_json() {
         }
     }
     if (is_swarm_encoder_json()) {
-        obs_size_ = 18;  // self_obs(4) + my_destination_rel(2) + (max_agents-1)*4, default max_agents=4
+        // Infer obs_size from swarm encoder weights (supports 2+2 and 4+2 self_goal layouts)
+        std::vector<float> self_goal_w;
+        std::vector<int> self_goal_shape;
+        if (extract_tensor("actor_encoder.self_goal_encoder.0.weight", self_goal_w, self_goal_shape) &&
+            self_goal_shape.size() >= 2) {
+            int self_goal_in = self_goal_shape[1];
+            const int single_neighbor = 4;
+            // obs = self_goal_in + num_neighbors*4; default 4 agents -> 3 neighbors
+            obs_size_ = self_goal_in + single_neighbor * 3;
+        } else {
+            obs_size_ = 18;  // fallback
+        }
         obs_mean_.assign(obs_size_, 0.0f);
         obs_var_.assign(obs_size_, 1.0f);
         return true;
@@ -627,6 +655,12 @@ bool RLPolicyJSON::build_swarm_encoder_from_json(Activation nonlinearity) {
     swarm_attention_layers_ = load_one(pre + "neighbor_encoder.attention_mlp.", {0, 2, 4}, false);
     if (swarm_self_goal_layers_.empty() || swarm_embedding_layers_.empty() || swarm_value_layers_.empty() || swarm_attention_layers_.size() != 3u)
         return false;
+    // Infer self_obs and my_destination dims from encoder (supports 2+2 and 4+2 layouts)
+    const int single_neighbor = 4;
+    int self_goal_in = swarm_self_goal_layers_[0].linear.in_features;
+    int embed_in = swarm_embedding_layers_[0].linear.in_features;
+    swarm_self_obs_dim_ = embed_in - single_neighbor;
+    swarm_my_destination_dim_ = self_goal_in - swarm_self_obs_dim_;
     return true;
 }
 
@@ -800,8 +834,8 @@ std::vector<float> RLPolicyJSON::encoder_forward(const std::vector<float>& input
 }
 
 std::vector<float> RLPolicyJSON::swarm_encoder_forward(const std::vector<float>& input) const {
-    const int self_obs_dim = 4;
-    const int my_destination_dim = 2;
+    const int self_obs_dim = swarm_self_obs_dim_;
+    const int my_destination_dim = swarm_my_destination_dim_;
     const int single_neighbor_dim = 4;
     if (input.size() < static_cast<size_t>(self_obs_dim + my_destination_dim))
         return std::vector<float>(dist_linear_.in_features, 0.0f);
@@ -871,9 +905,13 @@ std::vector<float> RLPolicyJSON::swarm_encoder_forward(const std::vector<float>&
         }
         attn_scores.push_back(a[0]);
     }
+    // Numerically stable softmax (match PyTorch F.softmax): subtract max before exp
+    float max_score = attn_scores[0];
+    for (size_t i = 1; i < attn_scores.size(); i++)
+        if (attn_scores[i] > max_score) max_score = attn_scores[i];
     float sum_exp = 0.0f;
     for (float& s : attn_scores) {
-        s = std::exp(std::max(-20.0f, std::min(20.0f, s)));
+        s = std::exp(s - max_score);
         sum_exp += s;
     }
     for (float& s : attn_scores) s /= sum_exp;

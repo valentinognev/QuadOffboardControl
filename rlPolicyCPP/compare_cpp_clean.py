@@ -122,13 +122,24 @@ def run_cpp_policy(json_path: str, test_data_path: str, normalized: bool = False
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare C++ RLPolicyJSON vs rl_policyClean")
+    # Allow -ckpt= as typo for --ckpt=
+    argv = []
+    for a in sys.argv[1:]:
+        if a.startswith("-ckpt="):
+            argv.append("--ckpt=" + a[6:])
+        else:
+            argv.append(a)
+
+    parser = argparse.ArgumentParser(
+        description="Compare C++ RLPolicyJSON vs rl_policyClean",
+        usage="%(prog)s --test_data=<path> --ckpt=<path> [--json=<path>] [--device=<cpu|cuda>] [--normalized]",
+    )
     parser.add_argument("--test_data", type=str, required=True, help="Path to test data file")
-    parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint .pth")
+    parser.add_argument("--ckpt", "-c", type=str, required=True, dest="ckpt", help="Path to checkpoint .pth")
     parser.add_argument("--json", type=str, default=None, help="Path to JSON (default: ckpt dir with .json)")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
     parser.add_argument("--normalized", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Resolve paths
     test_data_path = os.path.abspath(args.test_data) if not os.path.isabs(args.test_data) else args.test_data
@@ -174,6 +185,9 @@ def main() -> int:
 
     # Compare
     import numpy as np
+    if actions_cpp.size == 0:
+        print("  Error: C++ produced no actions. Check obs size mismatch (C++ expects obs_dim from JSON).", file=sys.stderr)
+        return 1
     min_dim = min(actions_clean.shape[1], actions_cpp.shape[1])
     a_clean = actions_clean[:, :min_dim]
     a_cpp = actions_cpp[:, :min_dim]
