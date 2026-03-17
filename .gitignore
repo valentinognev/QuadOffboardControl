@@ -83,3 +83,4 @@ config/*
 logs/*
 logs/*.csv
 simplemavlinktest/simpleMavlinkTest
+irisModel/*.ulg

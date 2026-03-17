@@ -15,6 +15,7 @@ docker run -it --net=host \
                --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
                --volume="${SCRIPT_DIR}/positions.txt:/home/valentin/PX4-Autopilot/Tools/simulation/positions.txt:rw" \
                --volume="${SCRIPT_DIR}/sitl_multiple_run.sh:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_multiple_run2.sh:rw" \
+               --volume="${SCRIPT_DIR}/irisModel/iris.sdf.jinja:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja:rw" \
                --name=${CONTAINER_NAME} \
                ${CONTAINER_NAME}
             #    --env="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \

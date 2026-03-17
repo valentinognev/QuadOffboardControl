@@ -26,6 +26,9 @@ docker run -it --rm \
 	--privileged \
 	--name ${PX4_SITL_DOCKER_NAME} \
 	-v $XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR \
+	-v $(pwd)/irisModel/iris.sdf.jinja:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja:rw \
+    -v $(pwd)/irisModel/10015_gazebo-classic_iris:/home/valentin/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris \
+	-v $(pwd)/irisModel/rcS:/home/valentin/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/rcS \
 	${PX4_SITL_DOCKER_VER} /bin/bash -c "$1 $2 $3"
 	# -v $(pwd)/10015_gazebo-classic_iris:/src/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris \
 	# -v $(pwd)/iris.sdf.jinja:/src/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja \

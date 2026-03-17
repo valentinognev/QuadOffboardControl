@@ -17,6 +17,9 @@ Summary of file changes from the current chat session.
 
 - **Env loading**: Support multiple constructor signatures so the swarm env can be loaded:
   - Tries in order: `(full_env_name, cfg, env_config)`, `(full_env_name, cfg)`, `(full_env_name, cfg, render_mode)`, `()`.
+- **Quadcopter_SimCon path**: When loading env, traverse up from env file to find directory containing `Quadcopter_SimCon/Simulation`; add it to `sys.path` so `from Quadcopter_SimCon.*` works (e.g. for envs under `system_manager/train_dir/`).
+- **Obs dimension mismatch**: When env obs_dim < policy obs_dim (e.g. swarm 16 vs 18), prefer env dim for swarm encoder structure; truncate `obs_space` accordingly.
+- **Arguments**: Custom `usage` and docstring use `--arg=value` format.
 - **Result**: `train_swarm_envhyb.py` (SwarmCircleEnv) can be loaded for observation space and test data generation (policy load for swarm still requires rl_policyClean with swarm support).
 
 ---
@@ -30,7 +33,8 @@ Summary of file changes from the current chat session.
 - **Swarm encoder**:
   - `_is_swarm_encoder_ckpt(ckpt)` detects `actor_encoder.self_goal_encoder.0.weight`.
   - `_build_swarm_encoder_from_ckpt(ckpt, nonlinearity)` builds the same structure as SwarmAttentionEncoder from `actor_encoder.*` (self_goal + neighbor attention) and returns a flat-obs wrapper.
-  - Obs size fallback when no normalizer: 18 for swarm (`6 + 3*4`).
+  - **Infer dims from checkpoint**: `self_obs_dim`, `my_destination_rel_dim` inferred from `self_goal_encoder.0.weight` and `embedding_mlp.0.weight` (supports both 2+2 and 4+2 layouts).
+  - **Obs mean truncation**: When checkpoint has `obs_mean` length not matching encoder layout (e.g. 18 when encoder expects 16), truncate to valid `4 + n*4`.
 - **Forward / init**:
   - `_core_hidden_size()` for GRU vs pass-through; `reset_hidden_state` and forward use it.
   - `_init_modules` accepts `core: nn.Module` (not only `nn.GRU`).
@@ -42,7 +46,7 @@ Summary of file changes from the current chat session.
 
 ## 4. `RLPolicyJSON.h`
 
-- **Members**: `has_rnn_`, `use_swarm_encoder_`, and swarm encoder layer vectors: `swarm_self_goal_layers_`, `swarm_embedding_layers_`, `swarm_value_layers_`, `swarm_attention_layers_`.
+- **Members**: `has_rnn_`, `use_swarm_encoder_`, `swarm_self_obs_dim_`, `swarm_my_destination_dim_`, and swarm encoder layer vectors: `swarm_self_goal_layers_`, `swarm_embedding_layers_`, `swarm_value_layers_`, `swarm_attention_layers_`.
 - **Methods**: `has_key_in_weights(key)`, `is_swarm_encoder_json()`, `build_swarm_encoder_from_json()`, `swarm_encoder_forward()`.
 
 ---
@@ -50,12 +54,13 @@ Summary of file changes from the current chat session.
 ## 5. `RLPolicyJSON.cpp`
 
 - **Helpers**: `get_weights_object()` to resolve `weights` (root or under `model`); `has_key_in_weights()`, `is_swarm_encoder_json()`.
-- **Normalizer**: If MLP encoder indices are empty and `is_swarm_encoder_json()`, set `obs_size_ = 18`.
-- **Encoder**: `build_swarm_encoder_from_json()` loads `actor_encoder.*` (self_goal, embedding, value, attention with last layer linear-only). `encoder_forward()` calls `swarm_encoder_forward()` when `use_swarm_encoder_`.
-- **Swarm forward**: `swarm_encoder_forward()` implements obs split (self_obs 4, my_destination 2, neighbor_obs), self_goal MLP, neighbor attention (embed → value → mean_embed → attention → softmax → weighted sum), concat to 512-d.
+- **Normalizer**: If MLP encoder indices are empty and `is_swarm_encoder_json()`, infer `obs_size_` from `actor_encoder.self_goal_encoder.0.weight` shape (`self_goal_in + 4*3` for 4 agents). When obs_normalizer present but length invalid for swarm, truncate `obs_mean_`/`obs_var_` to `4 + n*4`.
+- **Encoder**: `build_swarm_encoder_from_json()` loads `actor_encoder.*` (self_goal, embedding, value, attention with last layer linear-only). Sets `swarm_self_obs_dim_`, `swarm_my_destination_dim_` from weights (supports 2+2 and 4+2 layouts). `encoder_forward()` calls `swarm_encoder_forward()` when `use_swarm_encoder_`.
+- **Swarm forward**: `swarm_encoder_forward()` uses inferred `swarm_self_obs_dim_`, `swarm_my_destination_dim_` for obs split; self_goal MLP; neighbor attention (embed → value → mean_embed → attention → **numerically stable softmax** → weighted sum); concat to 512-d.
+- **Softmax**: Use `exp(x - max(x))` before normalization to match PyTorch `F.softmax` (fixes large C++ vs Python differences).
 - **Load order**: Build encoder (MLP or swarm), load dist_linear, then try load_gru; if GRU keys missing set `has_rnn_ = false`, `gru_hidden_size_ = dist_linear_.in_features`.
 - **Forward**: Call `gru_forward(x)` only when `has_rnn_` is true.
-- **Constructor**: Initialize `has_rnn_`, `use_swarm_encoder_`.
+- **Constructor**: Initialize `has_rnn_`, `use_swarm_encoder_`, `swarm_self_obs_dim_`, `swarm_my_destination_dim_`.
 - **JSONValue**: In free function use `RLPolicyJSON::JSONValue::OBJECT` for type checks.
 
 ---
@@ -95,7 +100,8 @@ Summary of file changes from the current chat session.
 ## 10. `compare_inference.py` (new)
 
 - **Purpose**: Compare rl_policyClean vs inference_sf_reference (Sample Factory) on the same test observations.
-- **Usage**: `python compare_inference.py --test_data=<path> --ckpt=<path> [--train_dir=...]`
+- **Usage**: `python compare_inference.py --test_data=<path> --ckpt=<path> [--train_dir=...]` (custom `usage` shows `--arg=value` format).
+- **Experiment dir inference**: `_infer_experiment_dir_from_ckpt(ckpt)` finds experiment dir (e.g. `.../swarm_3d_v4_hyb_new_obs`) from checkpoint path; prepends to `sys.path` so correct `swarm_encoder` (matching checkpoint's SELF_OBS_DIM) is loaded.
 - **Flow**: Loads test data, runs both inference methods, reports max/mean diff and sample outputs.
 
 ---
@@ -103,5 +109,7 @@ Summary of file changes from the current chat session.
 ## 11. `compare_cpp_clean.py` (new)
 
 - **Purpose**: Compare C++ RLPolicyJSON vs rl_policyClean on the same test data.
-- **Usage**: `python compare_cpp_clean.py --test_data=<path> --ckpt=<path> [--json=<path>]`
+- **Usage**: `python compare_cpp_clean.py --test_data=<path> --ckpt=<path> [--json=<path>]` (custom `usage` shows `--arg=value` format).
+- **Typo handling**: Preprocess `-ckpt=` → `--ckpt=`; `-c` short alias for `--ckpt`.
+- **Empty C++ output**: Detect when C++ produces no actions (e.g. obs size mismatch) and exit with clear error.
 - **Flow**: Runs rl_policyClean, runs C++ binary with `--test-data`, parses `*_test_data_results.txt`, compares and reports. Requires JSON (from `pth2json.py`) and built `bin/rlPolicyCPP`.
