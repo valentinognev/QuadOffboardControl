@@ -170,26 +170,46 @@ then
 	param set-default CA_ROTOR3_KM -0.05
 
 
-	param set-default MC_PITCHRATE_D	0.0003
+	param set-default MC_PITCHRATE_P	0.5
+	param set-default MC_PITCHRATE_I	0.001000
+	param set-default MC_PITCHRATE_D	0.0001
+	param set-default MC_PITCHRATE_K	0.1000
 	param set-default MC_PITCHRATE_FF	0.0000
-	param set-default MC_PITCHRATE_I	0.1000
-	param set-default MC_PITCHRATE_K	0.4000
-	param set-default MC_PITCHRATE_P	0.1500
 	param set-default MC_PITCHRATE_MAX	1000.0
-	param set-default MC_PITCH_P	    6.50000
+	param set-default MC_PITCH_P	    8.00000
 	param set-default MC_PR_INT_LIM	    0.30000
-	param set-default MC_ROLLRATE_D	    0.0010
+
+	param set-default MC_ROLLRATE_P	    0.3
+	param set-default MC_ROLLRATE_I	    0.0010000
+	param set-default MC_ROLLRATE_D	    0.0001
+	param set-default MC_ROLLRATE_K	    0.10000
 	param set-default MC_ROLLRATE_FF	0.00000
-	param set-default MC_ROLLRATE_I	    0.10000
 	param set-default MC_ROLLRATE_MAX	1000.0
-	param set-default MC_ROLLRATE_K	    0.40000
-	param set-default MC_ROLLRATE_P	    0.15000
-	param set-default MC_ROLL_P	        6.50000
+	param set-default MC_ROLL_P	        8.00000
+
+	param set-default MC_YAWRATE_P	    0.30000
 	param set-default MC_YAWRATE_K	    0.35000
-	param set-default MC_YAWRATE_P	    0.20000
 	param set-default MC_YAWRATE_MAX	1000.0
-	param set-default MC_YAW_P	        2.79999
+	param set-default MC_YAW_P	        4.0
 	param set-default MC_YAW_WEIGHT	0.40000
+
+	param set-default MPC_XY_VEL_P_ACC	7.0000
+	param set-default MPC_XY_VEL_I_ACC	0.0100
+	param set-default MPC_XY_VEL_D_ACC	0.12000
+	param set-default MPC_XY_VEL_ALL   -10.0000
+	param set-default MPC_XY_VEL_MAX	12.0000
+
+	param set-default MPC_XY_P	        0.95000
+	param set-default MPC_XY_TRAJ_P	    0.5000
+
+	param set-default MPC_Z_VEL_MAX_UP	5.0000
+	param set-default MPC_Z_VEL_P_ACC	5.0000
+	param set-default MPC_Z_VEL_I_ACC	2.0000
+	param set-default MPC_Z_VEL_D_ACC	0.0500
+	param set-default MPC_Z_VEL_ALL	   -3.0000
+	param set-default MPC_Z_VEL_MAX_DN	1.5000
+
+	param set-default MPC_Z_P	        2.0000
 
 fi
 
@@ -211,10 +231,10 @@ param set-default MAV_PROTO_VER 2 # Ensures QGC does not drop the first few pack
 
 param set-default -s MC_AT_EN 1
 
-# By default log from boot until first disarm.
-param set-default SDLOG_MODE 1
+# By default log from armed until disarm.
+param set-default SDLOG_MODE 0
 # enable default, estimator replay and vision/avoidance logging profiles
-param set-default SDLOG_PROFILE 2047
+param set-default SDLOG_PROFILE 27
 param set-default SDLOG_DIRS_MAX 7
 
 param set-default TRIG_INTERFACE 3
