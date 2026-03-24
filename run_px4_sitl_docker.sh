@@ -17,6 +17,20 @@ chmod 700 $XDG_RUNTIME_DIR
 # This should point to the Gazebo Sim resource directories
 export GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH:-/usr/share/gz}
 
+# Optional host files: if PX4_SITL_RCS_FILE / PX4_SITL_JINJA_FILE are set (e.g. by runSimNoetic.sh),
+# mount them into the container; otherwise use the image defaults (no extra mounts).
+# Host paths are passed as given (relative paths resolve from the current working directory).
+# Container destinations must stay absolute for Docker.
+PX4_IN_CONTAINER="${PX4_IN_CONTAINER:-/home/valentin/PX4-Autopilot}"
+RCS_VOL=()
+if [[ -n "${PX4_SITL_RCS_FILE:-}" ]]; then
+	RCS_VOL=( -v "${PX4_SITL_RCS_FILE}:${PX4_IN_CONTAINER}/ROMFS/px4fmu_common/init.d-posix/rcS:rw" )
+fi
+JINJA_VOL=()
+if [[ -n "${PX4_SITL_JINJA_FILE:-}" ]]; then
+	JINJA_VOL=( -v "${PX4_SITL_JINJA_FILE}:${PX4_IN_CONTAINER}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja:rw" )
+fi
+
 docker run -it --rm \
 	-e DISPLAY=$DISPLAY \
 	-e XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
@@ -26,9 +40,9 @@ docker run -it --rm \
 	--privileged \
 	--name ${PX4_SITL_DOCKER_NAME} \
 	-v $XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR \
-	-v $(pwd)/irisModel/iris.sdf.jinja:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja:rw \
-    -v $(pwd)/irisModel/10015_gazebo-classic_iris:/home/valentin/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris \
-	-v $(pwd)/irisModel/rcS:/home/valentin/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/rcS \
+	"${JINJA_VOL[@]}" \
+    -v irisModel/10015_gazebo-classic_iris:${PX4_IN_CONTAINER}/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris \
+	"${RCS_VOL[@]}" \
 	${PX4_SITL_DOCKER_VER} /bin/bash -c "$1 $2 $3"
 	# -v $(pwd)/10015_gazebo-classic_iris:/src/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris \
 	# -v $(pwd)/iris.sdf.jinja:/src/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja \

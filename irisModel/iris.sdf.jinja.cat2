@@ -5,14 +5,14 @@
       <pose>0 0 0 0 0 0</pose>
       <inertial>
         <pose>0 0 0 0 0 0</pose>
-        <mass>0.518</mass>
+        <mass>1.5</mass>
         <inertia>
-          <ixx>0.00084</ixx>
+          <ixx>0.029125</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.00135</iyy>
+          <iyy>0.029125</iyy>
           <iyz>0</iyz>
-          <izz>0.002</izz>
+          <izz>0.055225</izz>
         </inertia>
       </inertial>
       <collision name='base_link_inertia_collision'>
@@ -86,7 +86,7 @@
       </axis>
     </joint>
     <link name='rotor_0'>
-      <pose>0.054 -0.054 0.023 0 0 0</pose>
+      <pose>0.13 -0.22 0.023 0 0 0</pose>
       <inertial>
         <pose>0 0 0 0 0 0</pose>
         <mass>0.005</mass>
@@ -151,7 +151,7 @@
       </axis>
     </joint>
     <link name='rotor_1'>
-      <pose>-0.054 0.054 0.023 0 0 0</pose>
+      <pose>-0.13 0.2 0.023 0 0 0</pose>
       <inertial>
         <pose>0 0 0 0 0 0</pose>
         <mass>0.005</mass>
@@ -216,7 +216,7 @@
       </axis>
     </joint>
     <link name='rotor_2'>
-      <pose>0.054 0.054 0.023 0 0 0</pose>
+      <pose>0.13 0.22 0.023 0 0 0</pose>
       <inertial>
         <pose>0 0 0 0 0 0</pose>
         <mass>0.005</mass>
@@ -281,7 +281,7 @@
       </axis>
     </joint>
     <link name='rotor_3'>
-      <pose>-0.054 -0.054 0.023 0 0 0</pose>
+      <pose>-0.13 -0.2 0.023 0 0 0</pose>
       <inertial>
         <pose>0 0 0 0 0 0</pose>
         <mass>0.005</mass>
@@ -355,10 +355,10 @@
       <jointName>rotor_0_joint</jointName>
       <linkName>rotor_0</linkName>
       <turningDirection>ccw</turningDirection>
-      <timeConstantUp>0.0025</timeConstantUp>
-      <timeConstantDown>0.0125</timeConstantDown>
-      <maxRotVelocity>3000</maxRotVelocity>
-      <motorConstant>5.84e-06</motorConstant>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>1100</maxRotVelocity>
+      <motorConstant>23.0e-06</motorConstant>
       <momentConstant>0.06</momentConstant>
       <commandSubTopic>/gazebo/command/motor_speed</commandSubTopic>
       <motorNumber>0</motorNumber>
@@ -372,10 +372,10 @@
       <jointName>rotor_1_joint</jointName>
       <linkName>rotor_1</linkName>
       <turningDirection>ccw</turningDirection>
-      <timeConstantUp>0.0025</timeConstantUp>
-      <timeConstantDown>0.0125</timeConstantDown>
-      <maxRotVelocity>3000</maxRotVelocity>
-      <motorConstant>5.84e-06</motorConstant>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>1100</maxRotVelocity>
+      <motorConstant>23.0e-06</motorConstant>
       <momentConstant>0.06</momentConstant>
       <commandSubTopic>/gazebo/command/motor_speed</commandSubTopic>
       <motorNumber>1</motorNumber>
@@ -389,10 +389,10 @@
       <jointName>rotor_2_joint</jointName>
       <linkName>rotor_2</linkName>
       <turningDirection>cw</turningDirection>
-      <timeConstantUp>0.0025</timeConstantUp>
-      <timeConstantDown>0.0125</timeConstantDown>
-      <maxRotVelocity>3000</maxRotVelocity>
-      <motorConstant>5.84e-06</motorConstant>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>1100</maxRotVelocity>
+      <motorConstant>23.0e-06</motorConstant>
       <momentConstant>0.06</momentConstant>
       <commandSubTopic>/gazebo/command/motor_speed</commandSubTopic>
       <motorNumber>2</motorNumber>
@@ -406,10 +406,10 @@
       <jointName>rotor_3_joint</jointName>
       <linkName>rotor_3</linkName>
       <turningDirection>cw</turningDirection>
-      <timeConstantUp>0.0025</timeConstantUp>
-      <timeConstantDown>0.0125</timeConstantDown>
-      <maxRotVelocity>3000</maxRotVelocity>
-      <motorConstant>5.84e-06</motorConstant>
+      <timeConstantUp>0.0125</timeConstantUp>
+      <timeConstantDown>0.025</timeConstantDown>
+      <maxRotVelocity>1100</maxRotVelocity>
+      <motorConstant>23.0e-06</motorConstant>
       <momentConstant>0.06</momentConstant>
       <commandSubTopic>/gazebo/command/motor_speed</commandSubTopic>
       <motorNumber>3</motorNumber>
