@@ -9,9 +9,9 @@ DEFAULT_JINJA_FILE="$SCRIPT_DIR/irisModel/iris.sdf.jinja.cat2"
 
 usage() {
 	cat <<EOF
-Usage: $0 [--rcSfile=PATH] [--jinja=PATH]
+Usage: $0 [--rcS=PATH] [--jinja=PATH]
 
-  --rcSfile=PATH   Host path to rcS; bind-mounted into the PX4 container when set.
+  --rcS=PATH   Host path to rcS; bind-mounted into the PX4 container when set.
   --jinja=PATH     Host path to iris.sdf.jinja; bind-mounted when set.
                    If either is omitted and the corresponding default file exists under
                    this repo (irisModel/rcS.cat2, irisModel/iris.sdf.jinja.cat2), that
@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
 			usage
 			exit 0
 			;;
-		--rcSfile=*)
+		--rcS=*)
 			export PX4_SITL_RCS_FILE="${1#*=}"
 			shift
 			;;
