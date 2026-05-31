@@ -1,0 +1,64 @@
+{
+  "metrics": {
+    "coverage_pct": 100.0,
+    "cells_covered": 2844,
+    "total_cells": 2844,
+    "maintained_coverage_pct": 2.29,
+    "total_steps": 1800,
+    "steps_to_threshold": {
+      "50": 97,
+      "75": 191,
+      "90": 332,
+      "95": 419,
+      "98": 562,
+      "100": 1187
+    },
+    "efficiency_score": 0.395,
+    "overlap_ratio_pct": 71.66,
+    "distance_per_new_cell_m": 0.477,
+    "coverage_rate_slowdown": 1.0,
+    "collision_count": 0,
+    "wall_collision_count": 0,
+    "wall_violation_count": 41,
+    "total_distance_m": 1355.21,
+    "drone_distances_m": [
+      339.3,
+      340.12,
+      332.31,
+      343.48
+    ],
+    "energy_estimate": 1653.2,
+    "circling_events": 0,
+    "stagnation_events": {},
+    "drone_workload": [
+      1800,
+      1800,
+      1800,
+      1800
+    ],
+    "workload_std": 0.0,
+    "unique_contribution": [
+      461,
+      695,
+      798,
+      906
+    ],
+    "avg_inter_drone_spread_m": 15.11,
+    "avg_heading_diversity": 0.478,
+    "elapsed_sec": 12.66
+  },
+  "params": {
+    "grid_shape": [
+      80,
+      80
+    ],
+    "grid_resolution_m": 0.5,
+    "n_drones": 4,
+    "drone_safety_radius": 2.0,
+    "wall_safety_margin": 1.5,
+    "decay_rate": 0.97,
+    "world_w": 40.0,
+    "world_h": 40.0,
+    "max_steps": 1800
+  }
+}

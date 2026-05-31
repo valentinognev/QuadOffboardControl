@@ -1,0 +1,29 @@
+Seed: 2024
+Model: /workspace/outputs/models/model_100coverage.pt
+============================================================
+  coverage_pct: 99.82
+  cells_covered: 2846
+  total_cells: 2851
+  maintained_coverage_pct: 2.91
+  total_steps: 1000
+  steps_to_threshold: {50: 86, 75: 183, 90: 296, 95: 416, 98: 568, 100: None}
+  efficiency_score: 0.5692
+  overlap_ratio_pct: 63.7
+  distance_per_new_cell_m: 0.337
+  coverage_rate_slowdown: 0.99
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 42
+  total_distance_m: 960.36
+  drone_distances_m: [196.57, 197.4, 185.44, 184.15, 196.8]
+  energy_estimate: 1161.68
+  circling_events: 0
+  stagnation_events: {}
+  drone_workload: [1000, 1000, 1000, 1000, 1000]
+  workload_std: 0.0
+  unique_contribution: [603, 640, 431, 499, 690]
+  avg_inter_drone_spread_m: 15.41
+  avg_heading_diversity: 0.705
+  elapsed_sec: 8.16
+============================================================
+GRADE: C (79.5)

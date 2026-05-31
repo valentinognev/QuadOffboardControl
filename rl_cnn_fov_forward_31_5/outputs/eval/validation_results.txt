@@ -1,0 +1,170 @@
+============================================================
+         COVERAGE VALIDATION RESULTS
+============================================================
+Model: /workspace/outputs/models/model_100coverage.pt
+Seeds: [8668, 7404, 8043, 1024, 5442, 1447, 9622, 4582, 8161, 1538, 5225, 6125, 7266, 5140, 8063, 6947, 6997, 8100, 9462, 3133]
+
+--- Seed 8668 (see seed_8668/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.14
+  GRADE: C (77.0)
+
+--- Seed 7404 (see seed_7404/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.19
+  GRADE: C (77.1)
+
+--- Seed 8043 (see seed_8043/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 47
+  maintained_coverage_pct: 2.14
+  GRADE: C (77.0)
+
+--- Seed 1024 (see seed_1024/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.21
+  GRADE: C (77.1)
+
+--- Seed 5442 (see seed_5442/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 65
+  maintained_coverage_pct: 2.41
+  GRADE: C (76.9)
+
+--- Seed 1447 (see seed_1447/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 27
+  maintained_coverage_pct: 2.12
+  GRADE: C (77.1)
+
+--- Seed 9622 (see seed_9622/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 8
+  maintained_coverage_pct: 2.31
+  GRADE: C (76.9)
+
+--- Seed 4582 (see seed_4582/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 5
+  maintained_coverage_pct: 2.23
+  GRADE: C (77.0)
+
+--- Seed 8161 (see seed_8161/ for full dashboard) ---
+  coverage_pct: 99.96
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 13
+  maintained_coverage_pct: 2.07
+  GRADE: C (76.9)
+
+--- Seed 1538 (see seed_1538/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 19
+  maintained_coverage_pct: 2.23
+  GRADE: C (77.1)
+
+--- Seed 5225 (see seed_5225/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 41
+  maintained_coverage_pct: 2.29
+  GRADE: C (77.0)
+
+--- Seed 6125 (see seed_6125/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 23
+  maintained_coverage_pct: 2.32
+  GRADE: C (77.0)
+
+--- Seed 7266 (see seed_7266/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 6
+  maintained_coverage_pct: 2.04
+  GRADE: C (77.1)
+
+--- Seed 5140 (see seed_5140/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.25
+  GRADE: C (76.9)
+
+--- Seed 8063 (see seed_8063/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 9
+  maintained_coverage_pct: 2.17
+  GRADE: C (77.0)
+
+--- Seed 6947 (see seed_6947/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 12
+  maintained_coverage_pct: 2.2
+  GRADE: C (77.0)
+
+--- Seed 6997 (see seed_6997/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 2
+  maintained_coverage_pct: 2.23
+  GRADE: C (77.0)
+
+--- Seed 8100 (see seed_8100/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.19
+  GRADE: C (77.0)
+
+--- Seed 9462 (see seed_9462/ for full dashboard) ---
+  coverage_pct: 100.0
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.31
+  GRADE: C (77.0)
+
+--- Seed 3133 (see seed_3133/ for full dashboard) ---
+  coverage_pct: 99.93
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 0
+  maintained_coverage_pct: 2.11
+  GRADE: C (77.0)
+
+============================================================
+AGGREGATE: mean=99.99% min=99.93% max=100.00%
+Drone collisions: 0  Wall collisions: 0
+VERDICT: PASS

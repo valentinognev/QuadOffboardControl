@@ -1,0 +1,222 @@
+<html><head><meta charset='utf-8'>
+<title>Validation Dashboard</title>
+<style>
+body { font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; background: #fafafa; }
+h1 { color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 8px; }
+h2 { color: #283593; margin-top: 30px; }
+h3 { color: #3949ab; }
+table { border-collapse: collapse; margin: 10px 0; }
+th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+th { background: #e8eaf6; }
+tr:nth-child(even) { background: #f5f5f5; }
+.grade-box { font-size: 28px; font-weight: bold; padding: 16px 32px; border-radius: 8px;
+             display: inline-block; margin: 10px 0; }
+.grade-A { background: #c8e6c9; color: #1b5e20; }
+.grade-B { background: #dcedc8; color: #33691e; }
+.grade-C { background: #fff9c4; color: #f57f17; }
+.grade-D { background: #ffe0b2; color: #e65100; }
+.grade-F { background: #ffcdd2; color: #b71c1c; }
+img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; margin: 8px 0; }
+.metric-section { background: white; padding: 16px; border-radius: 8px; margin: 12px 0;
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+code { background: #e8eaf6; padding: 2px 6px; border-radius: 3px; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.summary-card { background: white; padding: 14px; border-radius: 8px; border-left: 4px solid #3f51b5;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.summary-card h4 { margin: 0 0 6px 0; color: #3f51b5; }
+.summary-card .value { font-size: 22px; font-weight: bold; }
+</style></head><body>
+<h1>🛸 Multi-Drone Coverage Validation Dashboard</h1>
+<p>Generated: 2026-05-31 14:22:11</p>
+<div class="grade-box grade-C">Overall Grade: C (76.9)</div>
+<h2>📊 Key Metrics at a Glance</h2>
+<div class="summary-grid">
+<div class="summary-card"><h4>Coverage</h4><div class="value">99.96%</div><small>Cells visited at least once</small></div>
+<div class="summary-card"><h4>Maintained</h4><div class="value">2.07%</div><small>Cells still fresh (within decay window)</small></div>
+<div class="summary-card"><h4>Efficiency</h4><div class="value">0.3896</div><small>Cells per drone-step</small></div>
+<div class="summary-card"><h4>Overlap</h4><div class="value">71.93%</div><small>Redundant revisits</small></div>
+<div class="summary-card"><h4>Collisions</h4><div class="value">0</div><small>Safety violations</small></div>
+<div class="summary-card"><h4>Wall Violations</h4><div class="value">13</div><small>Boundary breaches</small></div>
+<div class="summary-card"><h4>Total Distance</h4><div class="value">1368.55m</div><small>All drones combined</small></div>
+<div class="summary-card"><h4>Steps</h4><div class="value">1800</div><small>of 1800 max</small></div>
+</div>
+<h2>📋 Full Metrics Table</h2>
+<div class="metric-section">
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td><code>coverage_pct</code></td><td>99.96</td></tr>
+<tr><td><code>cells_covered</code></td><td>2805</td></tr>
+<tr><td><code>total_cells</code></td><td>2806</td></tr>
+<tr><td><code>maintained_coverage_pct</code></td><td>2.07</td></tr>
+<tr><td><code>total_steps</code></td><td>1800</td></tr>
+<tr><td><code>steps_to_threshold</code></td><td>{50: 85, 75: 197, 90: 294, 95: 334, 98: 469, 100: None}</td></tr>
+<tr><td><code>efficiency_score</code></td><td>0.3896</td></tr>
+<tr><td><code>overlap_ratio_pct</code></td><td>71.93</td></tr>
+<tr><td><code>distance_per_new_cell_m</code></td><td>0.488</td></tr>
+<tr><td><code>coverage_rate_slowdown</code></td><td>1.0</td></tr>
+<tr><td><code>collision_count</code></td><td>0</td></tr>
+<tr><td><code>wall_collision_count</code></td><td>0</td></tr>
+<tr><td><code>wall_violation_count</code></td><td>13</td></tr>
+<tr><td><code>total_distance_m</code></td><td>1368.55</td></tr>
+<tr><td><code>drone_distances_m</code></td><td>[342.33, 343.1, 338.18, 344.94]</td></tr>
+<tr><td><code>energy_estimate</code></td><td>1670.32</td></tr>
+<tr><td><code>circling_events</code></td><td>0</td></tr>
+<tr><td><code>stagnation_events</code></td><td>{}</td></tr>
+<tr><td><code>drone_workload</code></td><td>[1800, 1800, 1800, 1800]</td></tr>
+<tr><td><code>workload_std</code></td><td>0.0</td></tr>
+<tr><td><code>unique_contribution</code></td><td>[534, 980, 706, 590]</td></tr>
+<tr><td><code>avg_inter_drone_spread_m</code></td><td>16.28</td></tr>
+<tr><td><code>avg_heading_diversity</code></td><td>0.528</td></tr>
+<tr><td><code>elapsed_sec</code></td><td>12.69</td></tr>
+</table></div>
+<h2>🎯 Coverage Milestones</h2>
+<div class="metric-section">
+<table><tr><th>Threshold</th><th>Steps Required</th><th>Status</th></tr>
+<tr><td>50%</td><td>85</td><td>✅ Reached at step 85</td></tr>
+<tr><td>75%</td><td>197</td><td>✅ Reached at step 197</td></tr>
+<tr><td>90%</td><td>294</td><td>✅ Reached at step 294</td></tr>
+<tr><td>95%</td><td>334</td><td>✅ Reached at step 334</td></tr>
+<tr><td>98%</td><td>469</td><td>✅ Reached at step 469</td></tr>
+<tr><td>100%</td><td>—</td><td>❌ Not reached</td></tr>
+</table></div>
+<h2>🤖 Per-Drone Breakdown</h2>
+<div class="metric-section">
+<table><tr><th>Drone</th><th>Steps</th><th>Unique Cells</th><th>Distance (m)</th></tr>
+<tr><td>Drone 0</td><td>1800</td><td>534</td><td>342.33</td></tr>
+<tr><td>Drone 1</td><td>1800</td><td>980</td><td>343.1</td></tr>
+<tr><td>Drone 2</td><td>1800</td><td>706</td><td>338.18</td></tr>
+<tr><td>Drone 3</td><td>1800</td><td>590</td><td>344.94</td></tr>
+</table></div>
+<h2>📸 Visualizations</h2>
+<div class="metric-section">
+<h3>🗺️ Visit Heatmap</h3>
+<p><em>Shows how many times each cell was visited. Green = visited (darker = more visits). Red = never visited. Black = outside boundary.</em></p>
+<img src='validation_visit_heatmap.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>📈 Coverage & Behavior Over Time</h3>
+<p><em>4-panel chart: (1) Coverage % progress, (2) Exploration rate (new cells/step), (3) Spatial spread between drones, (4) Heading diversity.</em></p>
+<img src='validation_time_series.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>🛤️ Per-Drone Trajectories</h3>
+<p><em>World-coordinate paths of each drone. Circle = start position, X = final position. Good policies show non-overlapping sweeps.</em></p>
+<img src='validation_drone_paths.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>⚠️ Collision Timeline</h3>
+<p><em>Each dot represents a timestep where two drones were closer than the safety radius. Color indicates actual distance.</em></p>
+<img src='validation_collision_timeline.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>⚖️ Workload Distribution</h3>
+<p><em>3 bar charts: steps taken, unique cells discovered, and distance flown per drone. Red dashed line = mean. Large disparity = unfair workload.</em></p>
+<img src='validation_workload_distribution.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>📊 Coverage Uniformity</h3>
+<p><em>Left: histogram of visit counts (ideal: narrow peak at 1-2). Right: staleness map showing how recently each cell was refreshed.</em></p>
+<img src='validation_coverage_uniformity.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>🏁 Territory Map</h3>
+<p><em>Colors cells by which drone discovered them first. Shows how well the swarm partitions space. Even coloring = good coordination.</em></p>
+<img src='validation_territory_map.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>⚡ Distance vs Coverage (Efficiency Curve)</h3>
+<p><em>Coverage achieved vs total distance flown. Steeper slope = more efficient. Flattening = diminishing returns (harder to find remaining cells).</em></p>
+<img src='validation_dist_vs_coverage.png' width='900'/>
+</div>
+<div class="metric-section">
+<h3>🏎️ Speed Profile</h3>
+<p><em>Instantaneous speed of each drone over time. Drops to zero indicate stagnation. Consistent speed = smooth paths.</em></p>
+<img src='validation_speed_profile.png' width='900'/>
+</div>
+<h2>📖 Parameter & Metric Reference</h2>
+<div class="metric-section">
+<h3>Environment Parameters</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>grid_shape</code></td><td>Grid dimensions (rows × cols). The environment is discretized into this many cells. Finer grids give more precision but require more steps to cover.</td></tr>
+<tr><td><code>grid_resolution_m</code></td><td>Physical size of each grid cell in meters. Combined with grid_shape, determines the total world size.</td></tr>
+<tr><td><code>n_drones</code></td><td>Number of cooperative agents (drones) participating in the coverage task simultaneously.</td></tr>
+<tr><td><code>drone_safety_radius</code></td><td>Minimum allowed distance (m) between any two drones. If closer, a collision event is logged. Typical real-world value: 1.5-3m.</td></tr>
+<tr><td><code>wall_safety_margin</code></td><td>Minimum distance (m) a drone should maintain from the polygon boundary. Violations indicate boundary-unsafe behavior.</td></tr>
+<tr><td><code>decay_rate</code></td><td>Per-step multiplicative decay (0..1) for "maintained" coverage. A cell visited T steps ago has weight decay_rate^T. Higher values mean cells stay "fresh" longer. Window ≈ 1/(1-decay_rate) steps.</td></tr>
+<tr><td><code>world_w / world_h</code></td><td>Physical dimensions of the world in meters.</td></tr>
+<tr><td><code>max_steps</code></td><td>Maximum episode length. The simulation terminates after this many steps regardless of coverage achieved.</td></tr>
+</table>
+<h3>Coverage Metrics</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>coverage_pct</code></td><td>Percentage of active-area cells visited at least once. The primary success metric. 100% = full coverage.</td></tr>
+<tr><td><code>maintained_coverage_pct</code></td><td>Percentage of cells that have been visited recently enough to still be "fresh" (within the decay window). Important for persistent surveillance tasks.</td></tr>
+<tr><td><code>cells_covered</code></td><td>Absolute number of unique cells visited at least once.</td></tr>
+<tr><td><code>total_cells</code></td><td>Number of active cells inside the polygon (excluding margin/inactive areas).</td></tr>
+<tr><td><code>steps_to_threshold</code></td><td>Number of steps required to reach each coverage milestone (50%, 75%, 90%, 95%, 98%, 100%). "NOT REACHED" means the threshold was never achieved.</td></tr>
+</table>
+<h3>Efficiency Metrics</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>efficiency_score</code></td><td>cells_covered / (total_steps × n_drones). Represents how productively each drone-step was used. Ideal ≈ 1.0 (every step discovers a new cell). Typical good: 0.3-0.6.</td></tr>
+<tr><td><code>overlap_ratio_pct</code></td><td>Percentage of total cell-visits that were redundant (cell already visited). Lower = less wasted effort. 0% = perfect (no revisits).</td></tr>
+<tr><td><code>distance_per_new_cell_m</code></td><td>Average distance (m) flown to discover each new cell. Lower = more efficient paths.</td></tr>
+<tr><td><code>coverage_rate_slowdown</code></td><td>Ratio of (early_rate - late_rate) / early_rate. 0 = constant rate; 1 = exploration completely stopped. Shows how much the policy struggles in late-game.</td></tr>
+</table>
+<h3>Safety Metrics</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>collision_count</code></td><td>Total number of step×pair instances where two drones were closer than drone_safety_radius. Each occurrence is counted separately.</td></tr>
+<tr><td><code>wall_violation_count</code></td><td>Total number of step×drone instances where a drone was outside the polygon boundary.</td></tr>
+</table>
+<h3>Path Quality Metrics</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>total_distance_m</code></td><td>Sum of all distances flown by all drones (meters).</td></tr>
+<tr><td><code>drone_distances_m</code></td><td>Distance flown by each individual drone.</td></tr>
+<tr><td><code>energy_estimate</code></td><td>Approximate energy usage = total_distance + 0.5 × total_turning_radians. Penalizes excessive turning which costs battery.</td></tr>
+<tr><td><code>circling_events</code></td><td>Number of 40-step windows where a drone visited fewer than 8 unique cells (indicating it was circling/stuck).</td></tr>
+<tr><td><code>stagnation_events</code></td><td>Per-drone count of 20-step windows where the drone visited ≤2 unique cells (completely stuck).</td></tr>
+</table>
+<h3>Coordination Metrics</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>drone_workload</code></td><td>Number of steps each drone was active / moved. Should be balanced.</td></tr>
+<tr><td><code>workload_std</code></td><td>Standard deviation of workload across drones. Lower = fairer distribution. 0 = perfectly balanced.</td></tr>
+<tr><td><code>unique_contribution</code></td><td>Number of cells each drone was the FIRST to visit. Shows how well drones partition the space.</td></tr>
+<tr><td><code>avg_inter_drone_spread_m</code></td><td>Average pairwise distance between drones (meters), averaged over all steps. Higher = better spatial distribution.</td></tr>
+<tr><td><code>avg_heading_diversity</code></td><td>Circular variance of drone headings (0-1). 0 = all flying same direction (bad for coverage); 1 = maximally diverse headings (good).</td></tr>
+</table>
+<h3>Grading</h3>
+<table border="1" cellpadding="6" style="border-collapse:collapse; margin-bottom:16px;">
+<tr style="background:#f0f0f0;"><th>Parameter</th><th>Description</th></tr>
+<tr><td><code>Overall Grade</code></td><td>Weighted score: 50% coverage + 10% efficiency + 10% (100-overlap) + 20% safety (penalized by collisions) + 10% maintained coverage. Grades: A≥90, B≥80, C≥70, D≥60, F<60.</td></tr>
+</table>
+</div>
+<h2>💡 How to Interpret Results</h2>
+<div class="metric-section">
+<h3>What makes a good coverage policy?</h3>
+<ol>
+<li><b>High coverage (>95%)</b> — The primary objective. The swarm should visit every reachable cell.</li>
+<li><b>Low overlap (<20%)</b> — Efficient policies don't waste time revisiting cells unnecessarily.</li>
+<li><b>Zero collisions</b> — Safety is paramount; drones must maintain safe separation.</li>
+<li><b>Balanced workload</b> — All drones should contribute equally (low workload_std).</li>
+<li><b>High maintained coverage</b> — For surveillance: cells should be refreshed before they go stale.</li>
+<li><b>Fast convergence</b> — Reaching 90%+ coverage quickly (fewer steps) indicates efficient exploration.</li>
+<li><b>Good spread</b> — Drones should spread out (high avg spread) to avoid redundant coverage.</li>
+<li><b>Diverse headings</b> — Drones facing different directions explore different frontiers simultaneously.</li>
+</ol>
+
+<h3>Common Failure Modes</h3>
+<ul>
+<li><b>Circling/Stagnation</b> — Drone gets stuck in a loop. Check speed profile for zero-speed periods.</li>
+<li><b>Clustering</b> — Drones bunch together. Check spread plot for dips and territory map for uneven partition.</li>
+<li><b>Boundary hugging</b> — Drone follows walls instead of exploring interior. Check trajectory plot.</li>
+<li><b>Late-game inefficiency</b> — Coverage slows dramatically near 90%+. Check rate slowdown metric and distance-vs-coverage curve.</li>
+</ul>
+</div>
+<h2>📝 Notes</h2>
+<div class="metric-section">
+<p>This dashboard was auto-generated by <code>CoverageValidator.generate_dashboard()</code>. All plots are saved as individual PNGs alongside this HTML file. Metrics are also available in JSON format for programmatic analysis.</p>
+</div>
+</body></html>

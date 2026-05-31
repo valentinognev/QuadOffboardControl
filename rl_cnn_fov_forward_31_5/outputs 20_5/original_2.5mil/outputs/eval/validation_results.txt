@@ -1,0 +1,26 @@
+============================================================
+         COVERAGE VALIDATION RESULTS
+============================================================
+Model: /workspace/outputs/models/model_100coverage.pt
+Seeds: [205, 2024]
+
+--- Seed 205 (see seed_205/ for full dashboard) ---
+  coverage_pct: 99.86
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 24
+  maintained_coverage_pct: 2.37
+  GRADE: C (79.6)
+
+--- Seed 2024 (see seed_2024/ for full dashboard) ---
+  coverage_pct: 99.75
+  collision_count: 0
+  wall_collision_count: 0
+  wall_violation_count: 37
+  maintained_coverage_pct: 2.24
+  GRADE: C (79.4)
+
+============================================================
+AGGREGATE: mean=99.81% min=99.75% max=99.86%
+Drone collisions: 0  Wall collisions: 0
+VERDICT: PASS
