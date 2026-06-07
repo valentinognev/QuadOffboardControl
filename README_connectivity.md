@@ -15,7 +15,7 @@ use the stream as input.
 - The addition of another volume allows us to edit /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf. In iris.sdf, inside the 'base_link'
 link tag, add the following sensor:
 
-'''xml
+```xml
       <sensor name="front_camera" type="camera">
         <gz_frame_id>base_link</gz_frame_id>
         <pose>0.5 0 0 0 0 0</pose>
@@ -42,57 +42,57 @@ link tag, add the following sensor:
         </plugin>
         <topic>/iris/front_camera/image</topic>
       </sensor>
-'''
+```
 
 ### For model_zmq_bridge.cc
 On your host (the one you will use to run the gazebo sim), run:
-''' bash
+``` bash
 cd <host path that '/home/valentin/PX4-Autopilot' was copied to>/Tools/simulation/gazebo-classic/sitl_gazebo-classic
 mkdir -p build && cd build
 cmake ..
 make gazebo_zmq_bridge
-'''
+```
 
 Relevant to transmitter and reciever:
 ### Configure wired connection
 - On your host (the one you will use to run the gazebo sim), change your network settings and add to your ethernet configuration: ipv4 with IP 192.168.1.1 and subnet 255.255.255.0.
 - On your Raspberry pi make a similar addition by running:
-'''bash
+```bash
 interface eth0
 static ip_address=192.168.1.2/24
 static routers=192.168.1.1
-'''
+```
 or by editing your connections through your internet settings.
 - **Note:** the wifi connection will not work while the ethernet cable is connected.
 
 ### On the Raspberry pi
 - Save zmq_rec_rtsp_trans.py
 - Install mediamtx:
-''' bash
+``` bash
 mkdir mediamtx && cd mediamtx
 wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_v1.19.0_linux_arm64.tar.gz
 tar -xvfz mediamtx_v1.19.0_linux_arm64.tar.gz
-'''
+```
 
 ## Running (after installation)
 - Launch the simulation:
-'''bash
+```bash
 bash runSimNoetic.sh
-'''
+```
 - On the raspberry pi, launch mediamtx:
-'''bash
+```bash
 cd mediamtx
 ./mediamtx
-'''
+```
 - Still on the raspberry pi, start the listener:
-'''bash
+```bash
 zmq_rec_rtsp_trans.py
-'''
+```
 - Back on the device running the simulation connect to the container on another terminal and run, inside the container:
-'''bash
+```bash
 ./build/px4_sitl_default/build_gazebo-classic/gazebo_zmq_bridge /gazebo/default/iris/base_link/front_camera/image tcp://192.168.1.1:5555
-'''
+```
 - After establishing all connections, on your Raspberry pi, run:
-'''bash
+```bash
 hailo-tiling -i rtsp://127.0.0.1:8554/live
-'''
+```
