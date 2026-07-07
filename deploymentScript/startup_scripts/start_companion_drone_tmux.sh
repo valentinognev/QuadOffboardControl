@@ -7,13 +7,15 @@
 #
 #   Fleet UART   Role                         Typical /dev      Started by
 #   ──────────   ────                         ─────────────     ────────────
-#   UART1        LC29H DA — GPS/RTK rover in   /dev/ttyAMA0      startRtkCommPI.sh (rover_zmq)
+#   UART1        LC29H DA — GPS/RTK rover (optional) /dev/ttyAMA0  startRtkCommPI.sh
+#   USB          LC29H EA — GPS/RTK rover (default) /dev/ttyUSB0 startRtkEaUSB.sh
 #   UART2        Ground-station radio link    /dev/ttyAMA2      ZMQ_to_comm PY (--serialcomm)
 #   UART3        PX4 MAVLink telemetry        /dev/ttyAMA3      mavlink-server (separate service)
-#   UART4        NMEA / GPS out to PX4         /dev/ttyAMA4      startRtkCommPI.sh (emulate_gps_to_px4)
+#   UART4        NMEA / GPS out to PX4         /dev/ttyAMA4      startRtkEaUSB.sh / startRtkCommPI.sh (emulate_gps_to_px4)
 #
-#   RTK corrections: GS 107-byte frames on UART2 → ZMQ_to_comm reassembly → local ZMQ
-#   tcp://127.0.0.1:5562 → rover_zmq → DA UART1.  GS PC runs startRtkCommGS.sh.
+#   RTK corrections (saved in ~/.config/companion-rtk; switch with switch_rtk_WIFI_RF.sh):
+#     WiFi  — rover_zmq ZMQ PULL tcp://<GS_IP>:5560  (GS: startRtkWiFiGS.sh)
+#     Serial — UART2 GS frames → ZMQ_to_comm → tcp://127.0.0.1:5562 → rover_zmq
 #
 # Usage:
 #   ./start_companion_drone_tmux.sh <drone_id> [CPP|PY|python]
@@ -27,27 +29,94 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CATSWARM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/util/companion_rtk_connection.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/util/companion_gps_module.sh"
+
+_activate_companion_conda() {
+    if [ -n "${COMPANION_RUN_IN_RL:-}" ] && [ -x "${COMPANION_RUN_IN_RL}" ] && [ -x "${PYTHON:-}" ]; then
+        return 0
+    fi
+    local conda_lib="/usr/local/lib/companion-conda-env.sh"
+    local deploy_conda="${HOME}/deploy_pi5/files/companion-conda-env.sh"
+    if [ -f "${conda_lib}" ]; then
+        # shellcheck disable=SC1091
+        . "${conda_lib}"
+    elif [ -f "${deploy_conda}" ]; then
+        # shellcheck disable=SC1091
+        . "${deploy_conda}"
+    elif [ -f "/home/pi/miniconda/etc/profile.d/conda.sh" ]; then
+        COMPANION_CONDA_ROOT="/home/pi/miniconda"
+        COMPANION_CONDA_ENV="RL"
+        COMPANION_CONDA_SH="${COMPANION_CONDA_ROOT}/etc/profile.d/conda.sh"
+        # shellcheck disable=SC1090
+        source "${COMPANION_CONDA_SH}"
+        conda activate "${COMPANION_CONDA_ENV}"
+        export PATH
+        export PYTHON="${COMPANION_CONDA_ROOT}/envs/${COMPANION_CONDA_ENV}/bin/python"
+        export COMPANION_PYTHON="${PYTHON}"
+        for candidate in \
+            /usr/local/bin/companion-run-in-rl.sh \
+            "${HOME}/deploy_pi5/files/companion-run-in-rl.sh"; do
+            if [ -x "${candidate}" ]; then
+                export COMPANION_RUN_IN_RL="${candidate}"
+                break
+            fi
+        done
+        if [ -z "${COMPANION_RUN_IN_RL:-}" ]; then
+            echo "Error: companion-run-in-rl.sh not found" >&2
+            exit 1
+        fi
+    else
+        echo "Error: conda RL env not found (install companion boot or miniconda)" >&2
+        exit 1
+    fi
+}
+
+_sync_tmux_conda_env() {
+    local session="$1"
+    if ! tmux has-session -t "${session}" 2>/dev/null; then
+        return 0
+    fi
+    tmux set-option -t "${session}" default-shell /bin/bash
+    tmux set-environment -t "${session}" PATH "${PATH}"
+    tmux set-environment -t "${session}" PYTHON "${PYTHON}"
+    tmux set-environment -t "${session}" CONDA_DEFAULT_ENV "${CONDA_DEFAULT_ENV:-RL}"
+    if [ -n "${COMPANION_RUN_IN_RL:-}" ]; then
+        tmux set-environment -t "${session}" COMPANION_RUN_IN_RL "${COMPANION_RUN_IN_RL}"
+    fi
+}
+
+_activate_companion_conda
+
 HW_SCRIPT="${CATSWARM_ROOT}/hardware_adapter/hardware_adapter_multi.sh"
 MULTI_SETUP_LIST="${CATSWARM_ROOT}/system_manager/MultiInput/multiSetup.list"
 CPP_SYS_MANAGER="${CATSWARM_ROOT}/system_manager/SystemManagerMain"
 PY_SYS_MANAGER_DIR="${CATSWARM_ROOT}/system_manager/system_managerPY"
 PY_SYS_MANAGER="${PY_SYS_MANAGER_DIR}/system_manager.py"
-VENV_PYTHON="${CATSWARM_ROOT}/venv/bin/python"
-if [ ! -x "${VENV_PYTHON}" ] && [ -x "/home/pi/miniconda/envs/RL/bin/python" ]; then
-    VENV_PYTHON="/home/pi/miniconda/envs/RL/bin/python"
+VENV_PYTHON="${COMPANION_PYTHON:-${PYTHON:-}}"
+if [ -z "${VENV_PYTHON}" ] || [ ! -x "${VENV_PYTHON}" ]; then
+    VENV_PYTHON="${CATSWARM_ROOT}/venv/bin/python"
+    if [ ! -x "${VENV_PYTHON}" ] && [ -x "/home/pi/miniconda/envs/RL/bin/python" ]; then
+        VENV_PYTHON="/home/pi/miniconda/envs/RL/bin/python"
+    fi
 fi
 COMPANION_PYTHON="${COMPANION_PYTHON:-${VENV_PYTHON}}"
 if [ -x "${COMPANION_PYTHON}" ]; then
     export PYTHON="${COMPANION_PYTHON}"
 fi
-GPS_PI_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkCommPI.sh"
+GPS_EA_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkEaUSB.sh"
+GPS_DA_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkCommPI.sh"
 UART_DEPLOY_DOC="${SCRIPT_DIR}/RPi_second_UART_GPIO4_GPIO5_deployment.md"
 GPS_GUIDE="${CATSWARM_ROOT}/GPS_RTK/docs/guide-raspberry-pi-rover-px4.md"
 
 TMUX_SESSION="${CATSWARM_TMUX_SESSION:-catswarm_sim}"
-GPS_WINDOW="${COMPANION_GPS_WINDOW:-gps_rtk}"
-# Local ZMQ bridge: ZMQ_to_comm PUSH → rover_zmq PULL (same process owns UART2).
 COMPANION_RTK_ZMQ_BIND="${COMPANION_RTK_ZMQ_BIND:-tcp://127.0.0.1:5562}"
+COMPANION_BASE_HOST="${COMPANION_BASE_HOST:-192.168.0.43}"
+COMPANION_BASE_PORT_NUM="${COMPANION_BASE_PORT_NUM:-5560}"
+_RTK_MODE_EXPLICIT=0
+_GPS_MODULE_EXPLICIT=0
 
 UART1_GPS_DA="${COMPANION_UART1_GPS_DA:-/dev/ttyAMA0}"
 UART2_GS_RADIO="${COMPANION_UART2_GS_RADIO:-/dev/ttyAMA2}"
@@ -65,52 +134,49 @@ Usage:
   $(basename "$0") --drone-id=N [--version=PY] [--serial=DEVICE] [--session=SESSION]
   $(basename "$0") --kill [--session=SESSION]
 
-Companion: tmux ${TMUX_SESSION} with hardware_adapter_<id> + ${GPS_WINDOW} (RF RTK).
+Companion: tmux ${TMUX_SESSION} with hardware_adapter_<id> + GPS window (EA or DA).
+
+  GPS module uses last saved mode (~/.config/companion-gps). Override once:
+    --ea | --da | --gps-module=ea|da
+
+  RTK uses last saved mode (~/.config/companion-rtk). Override once:
+    --wifi | --serial | --rtk-mode=wifi|serial   --base-host=<GS IP>
 
   --kill                 Stop companion tmux session and comm/GPS processes
 
-  UART2 ${UART2_GS_RADIO} — ZMQ_to_comm (PY) reassembles GS RTK → ${COMPANION_RTK_ZMQ_BIND}
-  UART1 ${UART1_GPS_DA} / UART4 ${UART4_PX4_GPS_NMEA} — startRtkCommPI.sh
-
-GS PC: ./startRtkCommGS.sh  (comm default /dev/ttyUSB0, BS on other tty)
+  WiFi:  rover_zmq → tcp://<GS>:5560  (GS: startRtkWiFiGS.sh)
+  Serial: UART2 → ZMQ_to_comm → ${COMPANION_RTK_ZMQ_BIND}  (GS: startRtkCommGS.sh)
 
 Paths: ${CATSWARM_ROOT}
 EOF
 }
 
 print_topology() {
+    local rtk_line gps_line
+    if [[ "${COMPANION_USE_RF_RTK_BRIDGE:-0}" -eq 1 ]]; then
+        rtk_line="Serial RF — UART2 → ${COMPANION_RTK_ZMQ_BIND} → rover_zmq"
+    else
+        rtk_line="WiFi/LAN — rover_zmq → ${COMPANION_RTK_ZMQ_URL:-tcp://${COMPANION_BASE_HOST}:${COMPANION_BASE_PORT_NUM}}"
+    fi
+    if [[ "${COMPANION_GPS_MODULE:-ea}" == "da" ]]; then
+        gps_line="DA UART1 ${ROVER_PORT_UART} (${COMPANION_GPS_WINDOW:-gps_rtk}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+    else
+        gps_line="EA USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_ea}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+    fi
     cat <<EOF
 Companion topology (Raspberry Pi 5):
-  UART1 ${UART1_GPS_DA}  — LC29H DA (${GPS_WINDOW})
-  UART2 ${UART2_GS_RADIO}  — GS radio → ZMQ_to_comm PY${SERIAL_DEVICE:+ (${SERIAL_DEVICE})}
+  GPS rover — ${gps_line}
+  UART2 ${UART2_GS_RADIO}  — GS radio (ZMQ_to_comm PY)${SERIAL_DEVICE:+ (${SERIAL_DEVICE})}
   UART3 ${UART3_PX4_MAVLINK}  — PX4 MAVLink
-  UART4 ${UART4_PX4_GPS_NMEA}  — NMEA to PX4 (${GPS_WINDOW})
-  RTK path — UART2 GS frames → ${COMPANION_RTK_ZMQ_BIND} → rover_zmq → DA
+  RTK path — ${rtk_line} → $(companion_gps_module_label | cut -d' ' -f1)
 EOF
 }
 
 start_gps_combo() {
-    if [ ! -f "${GPS_PI_LAUNCHER}" ]; then
-        echo "Error: GPS launcher not found: ${GPS_PI_LAUNCHER}" >&2
-        return 1
-    fi
-    echo "Starting GPS/RTK stack in ${TMUX_SESSION}:${GPS_WINDOW}…"
-    GPS_ARGS=(
-        --rtk-zmq-url="${COMPANION_RTK_ZMQ_BIND}"
-        --da-port="${UART1_GPS_DA}"
-        --px4-port="${UART4_PX4_GPS_NMEA}"
-        --join-session
-        --no-attach
-        --session="${TMUX_SESSION}"
-        --window="${GPS_WINDOW}"
-    )
-    if [ -x "${COMPANION_PYTHON:-}" ]; then
-        GPS_ARGS+=( --python="${COMPANION_PYTHON}" )
-    fi
-    "${GPS_PI_LAUNCHER}" "${GPS_ARGS[@]}"
+    companion_gps_start_in_tmux "${TMUX_SESSION}" "${COMPANION_RTK_ZMQ_URL}" "${COMPANION_PYTHON:-${PYTHON}}" "${CATSWARM_ROOT}"
     sleep 1
-    if ! tmux list-windows -t "${TMUX_SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${GPS_WINDOW}"; then
-        echo "Error: tmux window ${TMUX_SESSION}:${GPS_WINDOW} not found after GPS start." >&2
+    if ! tmux list-windows -t "${TMUX_SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${COMPANION_GPS_WINDOW}"; then
+        echo "Error: tmux window ${TMUX_SESSION}:${COMPANION_GPS_WINDOW} not found after GPS start." >&2
         return 1
     fi
 }
@@ -145,12 +211,19 @@ kill_companion() {
 _KILL=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        -h|--help|help) usage; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         --kill) _KILL=1; shift ;;
         --drone-id=*) DRONE_ID="${1#--drone-id=}"; shift ;;
         --version=*) VERSION="${1#--version=}"; shift ;;
         --serial=*) SERIAL_DEVICE="${1#--serial=}"; shift ;;
         --session=*) TMUX_SESSION="${1#--session=}"; shift ;;
+        --rtk-mode=*) COMPANION_RTK_MODE="${1#--rtk-mode=}"; _RTK_MODE_EXPLICIT=1; shift ;;
+        --base-host=*) COMPANION_BASE_HOST="${1#*=}"; _RTK_MODE_EXPLICIT=1; export COMPANION_RTK_HOST_EXPLICIT=1; shift ;;
+        --wifi) COMPANION_RTK_MODE=wifi; _RTK_MODE_EXPLICIT=1; shift ;;
+        --serial|--rf) COMPANION_RTK_MODE=serial; _RTK_MODE_EXPLICIT=1; shift ;;
+        --ea|--gps-ea) COMPANION_GPS_MODULE=ea; _GPS_MODULE_EXPLICIT=1; shift ;;
+        --da|--gps-da) COMPANION_GPS_MODULE=da; _GPS_MODULE_EXPLICIT=1; shift ;;
+        --gps-module=*) COMPANION_GPS_MODULE="${1#--gps-module=}"; _GPS_MODULE_EXPLICIT=1; shift ;;
         -*)
             echo "Unknown option: $1" >&2
             usage >&2
@@ -217,10 +290,26 @@ elif [ ! -e "${SERIAL_DEVICE}" ]; then
     echo "Warning: serial device not present: ${SERIAL_DEVICE}" >&2
 fi
 
-if [ ! -f "${GPS_PI_LAUNCHER}" ]; then
-    echo "Error: GPS launcher not found: ${GPS_PI_LAUNCHER}" >&2
+if [ ! -f "${GPS_EA_LAUNCHER}" ] || [ ! -f "${GPS_DA_LAUNCHER}" ]; then
+    echo "Error: GPS launcher not found under ${CATSWARM_ROOT}/GPS_RTK/" >&2
     exit 1
 fi
+
+if [[ "${_GPS_MODULE_EXPLICIT}" -eq 1 ]]; then
+    companion_gps_resolve_module save
+else
+    companion_gps_resolve_module
+fi
+companion_gps_apply_module
+companion_gps_show_current_choice "${COMPANION_GPS_SOURCE:-}"
+
+if [[ "${_RTK_MODE_EXPLICIT}" -eq 1 ]]; then
+    companion_rtk_resolve_mode save
+else
+    companion_rtk_resolve_mode
+fi
+companion_rtk_apply_mode
+companion_rtk_show_current_choice "${COMPANION_RTK_SOURCE:-}"
 
 echo ""
 print_topology
@@ -234,7 +323,9 @@ HW_CMD=( "${HW_SCRIPT}"
 )
 if [ -n "${SERIAL_DEVICE}" ]; then
     HW_CMD+=( "--serialcomm=${SERIAL_DEVICE}" )
-    HW_CMD+=( "--rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}" )
+    if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
+        HW_CMD+=( "--rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}" )
+    fi
 fi
 
 echo "Starting hardware adapter (tmux layout)…"
@@ -242,8 +333,11 @@ echo "  Session:  ${TMUX_SESSION}"
 echo "  Window:   hardware_adapter_${DRONE_ID}"
 echo "  Version:  ${VERSION_UPPER}"
 echo "  GS UART2: ${SERIAL_DEVICE:-<none>}"
-echo "  RTK ZMQ:  ${COMPANION_RTK_ZMQ_BIND}"
+echo "  RTK mode: ${COMPANION_RTK_MODE} → ${COMPANION_RTK_ZMQ_URL}"
+echo "  GPS module: ${COMPANION_GPS_MODULE} → ${COMPANION_GPS_WINDOW}"
 "${HW_CMD[@]}"
+
+_sync_tmux_conda_env "${TMUX_SESSION}"
 
 HW_WINDOW="hardware_adapter_${DRONE_ID}"
 sleep 2
@@ -294,13 +388,15 @@ start_py_sysmgr() {
         echo "Error: Python system manager not found: ${PY_SYS_MANAGER}" >&2
         exit 1
     fi
-    local pybin="python3"
-    if [ -x "${VENV_PYTHON}" ]; then
-        pybin="${VENV_PYTHON}"
+    local pybin="${PYTHON}"
+    local inner="cd ${PY_SYS_MANAGER_DIR} && ${pybin} system_manager.py --config=${CONFIG_PATH}"
+    local cmd="${inner}"
+    if [ -n "${COMPANION_RUN_IN_RL:-}" ] && [ -x "${COMPANION_RUN_IN_RL}" ]; then
+        cmd="$(printf '%s %q' "${COMPANION_RUN_IN_RL}" "${inner}")"
     fi
     tmux send-keys -t "${TARGET}" C-c
     sleep 0.3
-    tmux send-keys -t "${TARGET}" "cd ${PY_SYS_MANAGER_DIR} && ${pybin} system_manager.py --config=${CONFIG_PATH}" ENTER
+    tmux send-keys -t "${TARGET}" "${cmd}" ENTER
 }
 
 echo "Starting system manager in bottom pane…"
@@ -319,4 +415,4 @@ start_gps_combo
 echo ""
 echo "Done."
 echo "  Attach: tmux attach -t ${TMUX_SESSION}"
-echo "  Windows: ${HW_WINDOW}, ${GPS_WINDOW} (RF RTK via ${COMPANION_RTK_ZMQ_BIND})"
+echo "  Windows: ${HW_WINDOW}, ${COMPANION_GPS_WINDOW} (GPS: $(companion_gps_module_label); RTK: $(companion_rtk_mode_label))"

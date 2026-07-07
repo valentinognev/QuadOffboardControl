@@ -41,9 +41,14 @@ fi
 
 DRONE_ID="${COMPANION_DRONE_ID:-}"
 RL_ROOT="${RL_ROOT:-/home/pi/RL}"
-LAUNCHER="${RL_ROOT}/deployscripts/start_companion_drone_tmux.sh"
+LAUNCHER="${RL_ROOT}/startup_scripts/start_companion_drone_tmux.sh"
 TMUX_SESSION="${CATSWARM_TMUX_SESSION:-catswarm_sim}"
 UART_WAIT_S="${COMPANION_UART_WAIT_S:-30}"
+USB_WAIT_S="${COMPANION_USB_WAIT_S:-${UART_WAIT_S}}"
+GPS_STATE_FILE="${COMPANION_GPS_STATE_FILE:-${HOME}/.config/companion-gps}"
+export COMPANION_BASE_HOST="${COMPANION_BASE_HOST:-192.168.0.43}"
+export COMPANION_BASE_PORT_NUM="${COMPANION_BASE_PORT_NUM:-5560}"
+export COMPANION_RTK_ZMQ_BIND="${COMPANION_RTK_ZMQ_BIND:-tcp://127.0.0.1:5562}"
 
 if [ -z "${DRONE_ID}" ]; then
     echo "companion-drone: COMPANION_DRONE_ID is not set (install with: sudo install-companion-boot.sh <drone_id>)" >&2
@@ -85,19 +90,47 @@ if tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
     exit 0
 fi
 
+_boot_gps_module() {
+    local module="${COMPANION_GPS_MODULE:-}"
+    if [[ -f "${GPS_STATE_FILE}" ]]; then
+        # shellcheck disable=SC1090
+        source "${GPS_STATE_FILE}"
+    fi
+    module="$(printf '%s' "${module:-ea}" | tr '[:upper:]' '[:lower:]')"
+    case "${module}" in
+        da|uart|serial|d) printf 'da\n' ;;
+        *) printf 'ea\n' ;;
+    esac
+}
+
+wait_for_device() {
+    local dev="$1"
+    local wait_s="$2"
+    local elapsed=0
+    while [ ! -e "${dev}" ] && [ "${elapsed}" -lt "${wait_s}" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if [ ! -e "${dev}" ]; then
+        echo "companion-drone: warning: ${dev} not present after ${wait_s}s" >&2
+        return 1
+    fi
+    return 0
+}
+
 wait_for_uarts() {
-    local dev elapsed=0
+    local dev
     for dev in /dev/ttyAMA0 /dev/ttyAMA2 /dev/ttyAMA3 /dev/ttyAMA4; do
-        elapsed=0
-        while [ ! -e "${dev}" ] && [ "${elapsed}" -lt "${UART_WAIT_S}" ]; do
-            sleep 1
-            elapsed=$((elapsed + 1))
-        done
-        if [ ! -e "${dev}" ]; then
-            echo "companion-drone: warning: ${dev} not present after ${UART_WAIT_S}s" >&2
-        fi
+        wait_for_device "${dev}" "${UART_WAIT_S}" || true
     done
 }
+
+BOOT_GPS_MODULE="$(_boot_gps_module)"
+BOOT_ROVER_PORT="${ROVER_PORT:-/dev/ttyUSB0}"
+echo "companion-drone: boot GPS module=${BOOT_GPS_MODULE} (from ${GPS_STATE_FILE})" >&2
+if [[ "${BOOT_GPS_MODULE}" == "ea" ]]; then
+    wait_for_device "${BOOT_ROVER_PORT}" "${USB_WAIT_S}" || true
+fi
 
 wait_for_uarts
 exec "${LAUNCHER}" "${DRONE_ID}"

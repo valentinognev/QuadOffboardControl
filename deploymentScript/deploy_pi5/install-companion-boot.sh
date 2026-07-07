@@ -62,6 +62,11 @@ COMPANION_CONDA_ENV=RL
 
 # Seconds to wait for /dev/ttyAMA* devices at boot
 COMPANION_UART_WAIT_S=30
+
+# RTK base connection is remembered in ~/.config/companion-rtk (switch with switch_rtk_WIFI_RF.sh)
+COMPANION_BASE_HOST=192.168.0.43
+COMPANION_BASE_PORT_NUM=5560
+COMPANION_RTK_ZMQ_BIND=tcp://127.0.0.1:5562
 EOF
   chmod 0644 /etc/default/companion-drone
 }
@@ -91,7 +96,7 @@ write_companion_config "${DRONE_ID}"
 cat > /etc/systemd/system/companion-drone.service <<'EOF'
 [Unit]
 Description=CatSwarm companion drone stack (hardware adapter + system manager + RTK)
-Documentation=file:///home/pi/RL/deployscripts/README.md
+Documentation=file:///home/pi/RL/startup_scripts/README.md
 After=network-online.target mavlink-server.service
 Wants=network-online.target mavlink-server.service
 

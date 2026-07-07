@@ -1,6 +1,6 @@
 # deploy_pi5 — script reference
 
-CatSwarm Raspberry Pi 5 companion deployment tooling. Scripts live under `~/deploy_pi5/` on the Pi (or `general_infrastructure/deploymentScript/` on the dev PC after sync).
+CatSwarm Raspberry Pi 5 companion deployment tooling. Scripts live under `~/deploy_pi5/` on the Pi (or `general_infrastructure/deploymentScript/deploy_pi5/` on the dev PC after sync).
 
 All shell scripts support `-h`, `--help`, or `help`.
 
@@ -13,7 +13,7 @@ All shell scripts support `-h`, `--help`, or `help`.
 | Full Pi deploy (online) | `sudo ~/deploy_pi5/deploy_pi5_companion.sh` |
 | Full Pi deploy (offline, pull from dev PC) | `sudo ~/deploy_pi5/deploy_pi5_companion.sh --from-dev=valentin@192.168.0.39` |
 | Install companion at boot | `sudo ~/deploy_pi5/install-companion-boot.sh 3` |
-| Start companion manually | `~/RL/deployscripts/start_companion_drone_tmux.sh 3` |
+| Start companion manually | `~/RL/startup_scripts/start_companion_drone_tmux.sh 3` |
 | Install missing Python pkg (Pi offline) | `~/deploy_pi5/pull-offline-packages.sh --from=valentin@192.168.0.39 matplotlib --install` |
 | Push scripts Pi → dev PC | `~/deploy_pi5/push-deploy-scripts-to-dev.sh valentin@192.168.0.39` |
 
@@ -23,7 +23,7 @@ All shell scripts support `-h`, `--help`, or `help`.
 
 ### `deploy_pi5_companion.sh`
 
-**Main deployment script.** Run on the Pi as root (`sudo`). Installs OS packages, Pi 5 UART boot overlays, Miniconda env `RL`, mavlink-server (systemd), clones or syncs Git repos under `~/RL`, builds `hardware_adapter`, copies deployscripts, and runs verification.
+**Main deployment script.** Run on the Pi as root (`sudo`). Installs OS packages, Pi 5 UART boot overlays, Miniconda env `RL`, mavlink-server (systemd), clones or syncs Git repos under `~/RL`, builds `hardware_adapter`, verifies `~/RL/startup_scripts`, and runs basic verification.
 
 **Phases** (`--phase=PHASE`):
 
@@ -31,7 +31,7 @@ All shell scripts support `-h`, `--help`, or `help`.
 |-------|----------------|
 | `all` | system → repos → mavlink → python → build → verify |
 | `system` | apt packages, `dialout` group, `/boot/firmware/config.txt` UART overlays |
-| `repos` | git clone/pull, `--from-dev` rsync, or bundled `files/deployscripts/` |
+| `repos` | git clone/pull, `--from-dev` / `--push-to` rsync (incl. `startup_scripts`), or verify existing `~/RL/startup_scripts` |
 | `mavlink` | mavlink-server binary, config template, systemd unit |
 | `python` | Miniconda + `RL` env (pyzmq, pyserial, pymavlink, matplotlib, torch, …) |
 | `build` | `make` in `hardware_adapter` (+ optional C++ system manager) |
@@ -45,7 +45,7 @@ All shell scripts support `-h`, `--help`, or `help`.
 - `--pip-via-dev[=USER@IP]` — fetch pip wheels via dev PC (auto-enabled with `--from-dev`)
 - `--push-to[=USER@IP]` — on dev PC: rsync local `~/RL` trees to the Pi
 - `--run-remote` — with `--push-to`: SSH to Pi and run this script (`--skip-clone`)
-- `--skip-clone` — skip git and deployscripts sync
+- `--skip-clone` — skip git and startup_scripts sync
 - `--git-https` / `--git-ssh` — force clone transport
 
 **Environment:** `RL_ROOT`, `CONDA_ENV`, `TORCH_VERSION`, `MAVLINK_SERVER_VERSION`, `DEV_PC_PASSWORD`
@@ -149,15 +149,17 @@ OFFLINE_WHEELS_DIR=~/deploy_pi5/offline-wheels ./offline-wheels-common.sh downlo
 
 ### `push-deploy-scripts-to-dev.sh`
 
-**Run on the Pi.** Push this `deploy_pi5/` tree to the dev PC (opposite of `--from-dev`). Excludes `offline-wheels/` by default.
+**Run on the Pi.** Push `deploy_pi5/` and `~/RL/startup_scripts/` to the dev PC (opposite of `--from-dev`). Excludes `offline-wheels/` by default.
 
 ```bash
 ~/deploy_pi5/push-deploy-scripts-to-dev.sh valentin@192.168.0.39
 ```
 
-**Default remote path:** `/home/valentin/RL/CatSwarm/general_infrastructure/deploymentScript/`
+**Default remote paths (dev PC):**
+- `deploy_pi5` → `/home/valentin/RL/CatSwarm/general_infrastructure/deploymentScript/deploy_pi5/`
+- `startup_scripts` → `.../deploymentScript/startup_scripts/`
 
-**Environment:** `DEV_PC_PASSWORD`, `DEPLOY_REMOTE_PATH`, `DEPLOY_SOURCE_DIR`
+**Environment:** `DEV_PC_PASSWORD`, `DEPLOY_REMOTE_PATH`, `DEPLOY_REMOTE_STARTUP_SCRIPTS`, `DEPLOY_SOURCE_DIR`, `RL_ROOT`
 
 ---
 
@@ -167,7 +169,7 @@ These are copied to system paths by `install-companion-boot.sh` and used by `dep
 
 ### `files/run-companion-drone.sh`
 
-**Boot wrapper** invoked by `companion-drone.service`. Reads `/etc/default/companion-drone` (or `~/.config/companion-drone`), activates conda, waits for UART devices, then runs `~/RL/deployscripts/start_companion_drone_tmux.sh <drone_id>`. Skips if tmux session `catswarm_sim` is already running.
+**Boot wrapper** invoked by `companion-drone.service`. Reads `/etc/default/companion-drone` (or `~/.config/companion-drone`), activates conda, waits for UART devices, then runs `~/RL/startup_scripts/start_companion_drone_tmux.sh <drone_id>`. Skips if tmux session `catswarm_sim` is already running.
 
 ---
 
@@ -199,11 +201,11 @@ companion-run-in-rl.sh 'python -c "import zmq"'
 
 ---
 
-## `files/deployscripts/` — bundled RL launchers
+## `~/RL/startup_scripts/` — companion launchers (RL tree)
 
-Copied to `~/RL/deployscripts/` during deploy. See also `files/deployscripts/README.md`.
+Canonical on the Pi: `~/RL/startup_scripts/`. On the dev PC: `~/RL/CatSwarm/general_infrastructure/deploymentScript/startup_scripts/`. Synced by `deploy_pi5_companion.sh --from-dev` / `--push-to`, and by `push-deploy-scripts-to-dev.sh` (Pi → dev). See `~/RL/startup_scripts/README.md`.
 
-### `files/deployscripts/start_companion_drone_tmux.sh`
+### `start_companion_drone_tmux.sh`
 
 **Main companion launcher.** Starts tmux session `catswarm_sim` with:
 
@@ -213,34 +215,32 @@ Copied to `~/RL/deployscripts/` during deploy. See also `files/deployscripts/REA
 | `gps_rtk` | `startRtkCommPI.sh` — rover_zmq + emulate_gps_to_px4 |
 
 ```bash
-~/RL/deployscripts/start_companion_drone_tmux.sh 3
-~/RL/deployscripts/start_companion_drone_tmux.sh --kill
+~/RL/startup_scripts/start_companion_drone_tmux.sh 3
+~/RL/startup_scripts/start_companion_drone_tmux.sh --kill
 ```
 
 **Pi 5 UART layout:** UART1 `/dev/ttyAMA0` (LC29H DA), UART2 `/dev/ttyAMA2` (GS radio), UART3 `/dev/ttyAMA3` (PX4 MAVLink), UART4 `/dev/ttyAMA4` (NMEA to PX4).
 
 ---
 
-### `files/deployscripts/startInitRoverPI.sh`
+### `startInitRoverPI.sh`
 
 **One-time LC29H DA configuration** on UART1 (`/dev/ttyAMA0`): RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from ground station.
 
 ```bash
-~/RL/deployscripts/startInitRoverPI.sh --phase1
+~/RL/startup_scripts/startInitRoverPI.sh --phase1
 # power-cycle DA
-~/RL/deployscripts/startInitRoverPI.sh --phase2
-~/RL/deployscripts/startInitRoverPI.sh --verify-rtk --rtk-zmq-url=tcp://127.0.0.1:5562
+~/RL/startup_scripts/startInitRoverPI.sh --phase2
+~/RL/startup_scripts/startInitRoverPI.sh --verify-rtk --rtk-zmq-url=tcp://127.0.0.1:5562
 ```
 
----
+### Operator scripts
 
-### `files/deployscripts/README.md`
-
-Companion deployscripts overview (UART topology, options, boot integration).
-
-### `files/deployscripts/RPi_second_UART_GPIO4_GPIO5_deployment.md`
-
-Hardware notes for enabling additional UART overlays on Raspberry Pi (GPIO4/GPIO5).
+| Script | Purpose |
+|--------|---------|
+| `switch_EAUSB_DAUART.sh` | Switch EA USB ↔ DA UART rover module |
+| `switch_rtk_WIFI_RF.sh` | Switch WiFi ↔ serial RF RTK path |
+| `restart_gs_wifi_rtk.sh` | Ground-station PC: restart WiFi RTK publisher |
 
 ---
 

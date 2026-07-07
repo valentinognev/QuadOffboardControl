@@ -4,7 +4,7 @@
 #
 # Installs OS packages, Pi 5 UART boot config, mavlink-server (systemd), Miniconda
 # env "RL" (torch + companion deps by default; use --with-ml for opencv/plotly), clones Git repos under
-# ~/RL, builds hardware_adapter, installs deployscripts, and runs basic verification.
+# ~/RL, builds hardware_adapter, expects startup_scripts under ${RL_ROOT}, and runs basic verification.
 #
 # Usage (on the Pi, as root):
 #   sudo ./deploy_pi5_companion.sh
@@ -75,7 +75,7 @@ SYNC_COMPONENTS=(
   "hardware_adapter:CatSwarm/hardware_adapter"
   "system_manager:CatSwarm/system_manager"
   "GPS_RTK:GPS_RTK"
-  "deployscripts:deployscripts"
+  "startup_scripts:CatSwarm/general_infrastructure/deploymentScript/startup_scripts"
 )
 SYNC_SIM_COMPONENT="general_infrastructure:CatSwarm/general_infrastructure"
 
@@ -196,7 +196,7 @@ progress_count_pi_steps() {
         n=$((n + 3))
         [ "${WITH_SIM}" -eq 1 ] && n=$((n + 1))
       elif [ "${FROM_DEV_MODE}" -eq 0 ]; then
-        n=$((n + 1))   # bundled deployscripts only
+        n=$((n + 1))   # verify startup_scripts
       fi
       n=$((n + 9))   # python: miniconda?, env, pip base, torch, pip gps, conda bashrc, pyzmq, pyserial, pymavlink
       [ "${WITH_ML}" -eq 1 ] && n=$((n + 1))
@@ -242,7 +242,7 @@ Options:
   --with-ml              Also install opencv, plotly (heavy extras; torch is always installed)
   --with-sim             Also clone QuadOffboardControl → ${RL_ROOT}/general_infrastructure
   --build-cpp-sysmgr     Build system_manager SystemManagerMain (C++)
-  --skip-clone           Skip git clone/pull and deployscripts sync
+  --skip-clone           Skip git clone/pull and startup_scripts sync
   --from-dev[=USER@IP]   On Pi: rsync project trees FROM dev PC (prompts SSH password)
   --from-dev-path=PATH   Dev PC RL root (default: /home/USER/RL)
   --from-dev-password=P  Dev PC SSH password (non-interactive; avoid on shared systems)
@@ -274,7 +274,7 @@ Python (${CONDA_ENV} env): pyzmq, pyserial, pymavlink, matplotlib, torch, ...
 
 Phases:
   system   apt, dialout, /boot/firmware/config.txt UART overlays
-  repos    git clone/pull, --from-dev rsync, or bundled deployscripts
+  repos    git clone/pull, --from-dev/--push-to rsync (incl. startup_scripts), or verify existing ${RL_ROOT}/startup_scripts
   mavlink  mavlink-server binary, config, systemd
   companion  companion-drone systemd service (requires COMPANION_DRONE_ID=<id>)
   python   Miniconda + RL env (torch, matplotlib, …; --with-ml adds opencv/plotly)
@@ -722,10 +722,21 @@ phase_sync_from_dev() {
   SKIP_CLONE=1
 }
 
+ensure_startup_scripts() {
+  local dir="${RL_ROOT}/startup_scripts"
+  local launcher="${dir}/start_companion_drone_tmux.sh"
+  if [ ! -f "${launcher}" ]; then
+    die "missing ${launcher} — populate ${RL_ROOT}/startup_scripts (use --from-dev on Pi or --push-to from dev PC)"
+  fi
+  run_as_user chmod +x "${dir}"/*.sh "${dir}"/util/*.sh 2>/dev/null || true
+  chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${dir}" 2>/dev/null || true
+  log "startup_scripts: ${dir}"
+}
+
 phase_repos() {
   log "=== phase: repos ==="
   if [ "${FROM_DEV_MODE}" -eq 0 ] && [ "${SKIP_CLONE}" -eq 1 ]; then
-    progress_tick "deployscripts (bundled)"
+    progress_tick "verify startup_scripts"
   fi
   run_as_user mkdir -p "${RL_ROOT}"
 
@@ -743,13 +754,7 @@ phase_repos() {
     fi
   fi
 
-  if [ "${FROM_DEV_MODE}" -eq 0 ]; then
-    log "install deployscripts → ${RL_ROOT}/deployscripts"
-    run_as_user mkdir -p "${RL_ROOT}/deployscripts"
-    cp -a "${FILES_DIR}/deployscripts/." "${RL_ROOT}/deployscripts/"
-    chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${RL_ROOT}/deployscripts"
-    chmod +x "${RL_ROOT}/deployscripts/"*.sh 2>/dev/null || true
-  fi
+  ensure_startup_scripts
 }
 
 # --- mavlink-server ---
@@ -886,7 +891,7 @@ EOF
   cat > /etc/systemd/system/companion-drone.service <<'EOF'
 [Unit]
 Description=CatSwarm companion drone stack (hardware adapter + system manager + RTK)
-Documentation=file:///home/pi/RL/deployscripts/README.md
+Documentation=file:///home/pi/RL/startup_scripts/README.md
 After=network-online.target mavlink-server.service
 Wants=network-online.target mavlink-server.service
 
@@ -1176,13 +1181,13 @@ If UART config was added, reboot once:
 
 After reboot:
   1. LC29H DA one-time init (power cycles required):
-     ${RL_ROOT}/deployscripts/startInitRoverPI.sh --phase1
+     ${RL_ROOT}/startup_scripts/startInitRoverPI.sh --phase1
      # power-cycle DA
-     ${RL_ROOT}/deployscripts/startInitRoverPI.sh --phase2
+     ${RL_ROOT}/startup_scripts/startInitRoverPI.sh --phase2
 
   2. Enable companion stack at boot:
      sudo ~/deploy_pi5/install-companion-boot.sh <drone_id>
-     Manual start: ${RL_ROOT}/deployscripts/start_companion_drone_tmux.sh <drone_id>
+     Manual start: ${RL_ROOT}/startup_scripts/start_companion_drone_tmux.sh <drone_id>
 
   3. Attach tmux:
      tmux attach -t catswarm_sim
