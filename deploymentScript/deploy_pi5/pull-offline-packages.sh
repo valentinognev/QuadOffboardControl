@@ -189,8 +189,14 @@ remote_download_wheels() {
   _scp "${SCRIPT_DIR}/offline-wheels-common.sh" \
     "${DEV_SPEC}:${remote_script}"
 
+  # Quote each requirement so remote shell does not treat >= as redirection.
+  local remote_pkgs="" p
+  for p in "${PACKAGES[@]}"; do
+    remote_pkgs+=" $(printf '%q' "${p}")"
+  done
+
   _ssh "${DEV_SPEC}" \
-    "chmod +x '${remote_script}' && OFFLINE_WHEELS_DIR='${remote_wheels}' '${remote_script}' download ${PACKAGES[*]}"
+    "chmod +x '${remote_script}' && OFFLINE_WHEELS_DIR='${remote_wheels}' '${remote_script}' download${remote_pkgs}"
 
   mkdir -p "${WHEELS_DIR}"
   _rsync_from_dev "${DEV_SPEC}:${remote_wheels}/" "${WHEELS_DIR}/"

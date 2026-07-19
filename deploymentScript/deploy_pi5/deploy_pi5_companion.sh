@@ -32,7 +32,7 @@ DEPLOY_HOME=""
 MAVLINK_SERVER_VERSION="${MAVLINK_SERVER_VERSION:-}"
 MAVLINK_SERVER_URL="${MAVLINK_SERVER_URL:-}"
 MAVLINK_SERVER_ASSET="${MAVLINK_SERVER_ASSET:-mavlink-server-aarch64-unknown-linux-musl}"
-MAVLINK_SERVER_FALLBACK_VERSION="${MAVLINK_SERVER_FALLBACK_VERSION:-0.8.0}"
+MAVLINK_SERVER_FALLBACK_VERSION="${MAVLINK_SERVER_FALLBACK_VERSION:-0.9.0}"
 CONDA_ENV="${CONDA_ENV:-RL}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11.5}"
 TORCH_VERSION="${TORCH_VERSION:-2.5}"
@@ -87,6 +87,28 @@ RSYNC_EXCLUDES=(
   --exclude='.pytest_cache'
   --exclude='*.pyc'
   --exclude='.cursor'
+  --exclude='logs/'
+  --exclude='**/logs/'
+  --exclude='log/'
+  --exclude='**/log/'
+  --exclude='*_control_logs_*.csv'
+  --exclude='*_system_manager.csv'
+  --exclude='*.tar'
+  --exclude='*.tar.gz'
+  --exclude='*.tgz'
+  --exclude='*.gz'
+  --exclude='obj/'
+  --exclude='**/obj/'
+  --exclude='*.o'
+  --exclude='bin/'
+  --exclude='**/bin/'
+  --exclude='build/'
+  --exclude='**/build/'
+  # Host-built ELF at repo root (not under bin/) — x86_64 copy → Exec format error on Pi.
+  --exclude='SystemManagerMain'
+  --exclude='**/SystemManagerMain'
+  --exclude='CommSimVerify'
+  --exclude='**/CommSimVerify'
 )
 
 REPO_HARDWARE_ADAPTER_SSH="git@github.com:valentinognev/hardware_adapter.git"
@@ -101,6 +123,20 @@ GIT_TRANSPORT="${GIT_TRANSPORT:-auto}"
 
 log() { echo "[deploy] $*"; }
 die() { echo "[deploy] ERROR: $*" >&2; exit 1; }
+
+parse_ssh_spec() {
+  # Sets global _ssh_user and _ssh_host from $1; default user in $2.
+  # Must be defined before resolve_pip_via_dev runs at parse time.
+  local spec="$1" default_user="$2"
+  if [[ "${spec}" == *@* ]]; then
+    _ssh_user="${spec%%@*}"
+    _ssh_host="${spec#*@}"
+  else
+    _ssh_host="${spec}"
+    _ssh_user="${default_user}"
+  fi
+  [ -n "${_ssh_host}" ] || die "missing host in SSH target"
+}
 
 progress_enabled() {
   [ "${SHOW_PROGRESS}" -eq 1 ]
@@ -183,6 +219,73 @@ curl_download() {
   fi
 }
 
+# True when we can SSH to a networked PC (from --from-dev / --pip-via-dev).
+have_dev_pc_fetch() {
+  [ -n "${PIP_VIA_DEV_HOST:-}" ] || [ -n "${FROM_DEV_HOST:-}" ]
+}
+
+dev_pc_user() { echo "${PIP_VIA_DEV_USER:-${FROM_DEV_USER}}"; }
+dev_pc_host() { echo "${PIP_VIA_DEV_HOST:-${FROM_DEV_HOST}}"; }
+dev_pc_password() { echo "${PIP_VIA_DEV_PASSWORD:-${FROM_DEV_PASSWORD}}"; }
+
+# Download URL on the networked PC over SSH, then copy to local path (offline Pi).
+# Returns 0 on success, 1 on failure.
+fetch_url_via_dev_pc() {
+  local url="$1" out="$2" label="${3:-download}"
+  local user host password remote_tmp remote
+  user="$(dev_pc_user)"
+  host="$(dev_pc_host)"
+  password="$(dev_pc_password)"
+  if [ -z "${user}" ] || [ -z "${host}" ]; then
+    log "ERROR: no --from-dev / --pip-via-dev host for offline ${label}"
+    return 1
+  fi
+  remote="${user}@${host}"
+  remote_tmp="deploy_pi5-offline-staging/${label//[^A-Za-z0-9._-]/_}.bin"
+
+  log "${label}: fetching via ${remote} (Pi has no outbound internet)…"
+  ensure_sshpass
+  if [ -n "${password}" ]; then
+    export SSHPASS="${password}"
+    sshpass -e ssh -o StrictHostKeyChecking=accept-new "${remote}" \
+      "mkdir -p deploy_pi5-offline-staging && curl -fL --connect-timeout 30 -o '${remote_tmp}' '${url}'" \
+      || { log "ERROR: ${label}: download on ${remote} failed"; return 1; }
+    sshpass -e scp -o StrictHostKeyChecking=accept-new \
+      "${remote}:${remote_tmp}" "${out}" \
+      || { log "ERROR: ${label}: scp from ${remote} failed"; return 1; }
+    sshpass -e ssh -o StrictHostKeyChecking=accept-new "${remote}" "rm -f '${remote_tmp}'" 2>/dev/null || true
+  else
+    ssh -o StrictHostKeyChecking=accept-new "${remote}" \
+      "mkdir -p deploy_pi5-offline-staging && curl -fL --connect-timeout 30 -o '${remote_tmp}' '${url}'" \
+      || { log "ERROR: ${label}: download on ${remote} failed (set password or SSH keys)"; return 1; }
+    scp -o StrictHostKeyChecking=accept-new \
+      "${remote}:${remote_tmp}" "${out}" \
+      || { log "ERROR: ${label}: scp from ${remote} failed"; return 1; }
+    ssh -o StrictHostKeyChecking=accept-new "${remote}" "rm -f '${remote_tmp}'" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Prefer direct curl; on DNS/network failure use dev PC when available.
+# With --from-dev/--pip-via-dev, skip the doomed GitHub attempt on offline Pis.
+# Returns 0 on success, 1 on failure (caller may fall back to a local binary).
+curl_or_dev_download() {
+  local url="$1" out="$2" label="${3:-download}"
+  if [ "${PIP_VIA_DEV_MODE:-0}" -eq 1 ] && have_dev_pc_fetch; then
+    fetch_url_via_dev_pc "${url}" "${out}" "${label}"
+    return $?
+  fi
+  if curl_download "${url}" "${out}" "${label}"; then
+    return 0
+  fi
+  if have_dev_pc_fetch; then
+    log "WARNING: direct download failed; retrying ${label} via dev PC…"
+    fetch_url_via_dev_pc "${url}" "${out}" "${label}"
+    return $?
+  fi
+  return 1
+}
+
 progress_count_pi_steps() {
   local n=1
   case "${PHASE}" in
@@ -262,7 +365,7 @@ Options:
   -h, --help, help       Show this help
 
 Environment:
-  MAVLINK_SERVER_VERSION   Pin release (e.g. 0.8.0); default: latest from GitHub API
+  MAVLINK_SERVER_VERSION   Pin release (e.g. 0.9.0); default: latest from GitHub API
   MAVLINK_SERVER_URL       Full download URL (overrides version lookup)
   MAVLINK_SERVER_FALLBACK_VERSION  If GitHub unreachable (default: ${MAVLINK_SERVER_FALLBACK_VERSION})
   TORCH_VERSION            Pin torch for system_manager RL controller (default: ${TORCH_VERSION})
@@ -351,19 +454,6 @@ resolve_deploy_home() {
 
 is_raspberry_pi() {
   [ -r /proc/device-tree/model ] && grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null
-}
-
-parse_ssh_spec() {
-  # Sets global _ssh_user and _ssh_host from $1; default user in $2.
-  local spec="$1" default_user="$2"
-  if [[ "${spec}" == *@* ]]; then
-    _ssh_user="${spec%%@*}"
-    _ssh_host="${spec#*@}"
-  else
-    _ssh_host="${spec}"
-    _ssh_user="${default_user}"
-  fi
-  [ -n "${_ssh_host}" ] || die "missing host in SSH target"
 }
 
 ensure_sshpass() {
@@ -557,7 +647,12 @@ phase_system() {
     libzmq3-dev python3 python3-venv python3-dev \
     libtool autoconf automake
   if [ "${FROM_DEV_MODE}" -eq 1 ]; then
-    apt-get "${apt_extra[@]}" install -y sshpass
+    # Prefer already-installed /usr/local wrapper when apt/mirrors are unreachable.
+    if ! command -v sshpass >/dev/null 2>&1; then
+      apt-get "${apt_extra[@]}" install -y sshpass
+    else
+      log "sshpass already present ($(command -v sshpass)); skipping apt install"
+    fi
   fi
 
   if ! id -nG "${DEPLOY_USER}" | tr ' ' '\n' | grep -qx dialout; then
@@ -687,6 +782,9 @@ phase_sync_from_dev() {
   log "=== phase: sync from dev PC (${FROM_DEV_USER}@${FROM_DEV_HOST}) ==="
   resolve_from_dev_target
   prompt_password FROM_DEV_PASSWORD "SSH password for ${FROM_DEV_USER}@${FROM_DEV_HOST}: "
+  if [ -z "${PIP_VIA_DEV_PASSWORD}" ] && [ -n "${FROM_DEV_PASSWORD}" ]; then
+    PIP_VIA_DEV_PASSWORD="${FROM_DEV_PASSWORD}"
+  fi
   setup_rsync_rsh "${FROM_DEV_PASSWORD}"
 
   progress_tick "SSH test dev PC"
@@ -808,11 +906,27 @@ phase_mavlink() {
   progress_tick "mavlink-server"
   log "=== phase: mavlink ==="
   resolve_mavlink_server_release
-  local tmp
+  local tmp cache="${SCRIPT_DIR}/offline-binaries/${MAVLINK_SERVER_ASSET}"
   tmp="$(mktemp)"
-  curl_download "${MAVLINK_SERVER_URL}" "${tmp}" "mavlink-server ${MAVLINK_SERVER_VERSION}"
-  install -m 0755 "${tmp}" /usr/bin/mavlink-server
-  rm -f "${tmp}"
+  if [ -f "${cache}" ]; then
+    log "mavlink-server: using cached ${cache}"
+    cp -f "${cache}" "${tmp}"
+  elif curl_or_dev_download "${MAVLINK_SERVER_URL}" "${tmp}" "mavlink-server ${MAVLINK_SERVER_VERSION}"; then
+    mkdir -p "${SCRIPT_DIR}/offline-binaries"
+    cp -f "${tmp}" "${cache}" 2>/dev/null || true
+    chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${SCRIPT_DIR}/offline-binaries" 2>/dev/null || true
+    chmod 0755 "${cache}" 2>/dev/null || true
+  elif [ -x /usr/bin/mavlink-server ]; then
+    log "WARNING: download failed; keeping existing /usr/bin/mavlink-server"
+    rm -f "${tmp}"
+    tmp=""
+  else
+    die "mavlink-server download failed (offline Pi: --from-dev=user@dev-pc)"
+  fi
+  if [ -n "${tmp}" ]; then
+    install -m 0755 "${tmp}" /usr/bin/mavlink-server
+    rm -f "${tmp}"
+  fi
   /usr/bin/mavlink-server --version 2>/dev/null || log "mavlink-server installed (no --version)"
 
   install -d /etc/mavlink-server
@@ -1061,17 +1175,19 @@ install_companion_pip_online() {
 }
 
 verify_companion_pip_imports() {
-  local pip="$1"
-  progress_tick "pip install pyzmq (${CONDA_ENV})"
-  run_as_user "${pip}" -c "import zmq; print('${CONDA_ENV}: pyzmq', zmq.zmq_version())" \
+  local py="${CONDA_PREFIX}/envs/${CONDA_ENV}/bin/python"
+  [ -x "${py}" ] || die "missing ${py}"
+
+  progress_tick "verify pyzmq (${CONDA_ENV})"
+  run_as_user "${py}" -c "import zmq; print('${CONDA_ENV}: pyzmq', zmq.zmq_version())" \
     || die "pyzmq not importable in ${CONDA_ENV}"
 
-  progress_tick "pip install pyserial (${CONDA_ENV})"
-  run_as_user "${pip}" -c "import serial; print('${CONDA_ENV}: pyserial', serial.__version__)" \
+  progress_tick "verify pyserial (${CONDA_ENV})"
+  run_as_user "${py}" -c "import serial; print('${CONDA_ENV}: pyserial', serial.__version__)" \
     || die "pyserial not importable in ${CONDA_ENV} (used by startInitRoverPI.sh)"
 
-  progress_tick "pip install pymavlink (${CONDA_ENV})"
-  run_as_user "${pip}" -c "
+  progress_tick "verify pymavlink (${CONDA_ENV})"
+  run_as_user "${py}" -c "
 import pymavlink
 _v = getattr(pymavlink, '__version__', None)
 print('${CONDA_ENV}: pymavlink', _v if _v is not None else '(import ok)')
@@ -1088,8 +1204,9 @@ phase_python() {
 
   if [ ! -x "${CONDA_PREFIX}/bin/conda" ]; then
     progress_tick "Miniconda download"
-    curl_download "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh" \
-      "${miniconda_sh}" "Miniconda installer"
+    curl_or_dev_download "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh" \
+      "${miniconda_sh}" "Miniconda installer" \
+      || die "Miniconda download failed (offline Pi: --from-dev=user@dev-pc)"
     chown "${DEPLOY_USER}:${DEPLOY_USER}" "${miniconda_sh}"
     progress_tick "Miniconda install"
     run_as_user bash "${miniconda_sh}" -b -p "${CONDA_PREFIX}"
@@ -1112,7 +1229,7 @@ phase_python() {
   else
     install_companion_pip_online "${pip}" "${pip_flags[@]}"
   fi
-  verify_companion_pip_imports "${pip}"
+  verify_companion_pip_imports
 }
 
 # --- build ---
@@ -1126,13 +1243,23 @@ phase_build() {
 
   if [ "${BUILD_CPP_SYSMGR}" -eq 1 ]; then
     progress_tick "build system_manager C++"
-    [ -x "${RL_ROOT}/system_manager/system_managerCPP/build.sh" ] || die "missing system_managerCPP/build.sh"
-    run_as_user bash "${RL_ROOT}/system_manager/system_managerCPP/build.sh" Release
-    if [ -f "${RL_ROOT}/system_manager/system_managerCPP/build/SystemManagerMain" ]; then
-      install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0755 \
-        "${RL_ROOT}/system_manager/system_managerCPP/build/SystemManagerMain" \
-        "${RL_ROOT}/system_manager/SystemManagerMain"
+    local sm_cpp="${RL_ROOT}/system_manager/system_managerCPP"
+    [ -x "${sm_cpp}/build.sh" ] || die "missing system_managerCPP/build.sh"
+    # build.sh uses cwd-relative build/; must run from system_managerCPP.
+    run_as_user bash -lc "cd $(printf '%q' "${sm_cpp}") && ./build.sh Release"
+    local built=""
+    if [ -f "${RL_ROOT}/system_manager/SystemManagerMain" ]; then
+      built="${RL_ROOT}/system_manager/SystemManagerMain"
+    elif [ -f "${sm_cpp}/build/SystemManagerMain" ]; then
+      built="${sm_cpp}/build/SystemManagerMain"
     fi
+    [ -n "${built}" ] || die "SystemManagerMain not produced by build.sh"
+    install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0755 \
+      "${built}" "${RL_ROOT}/system_manager/SystemManagerMain"
+    if ! file -b "${RL_ROOT}/system_manager/SystemManagerMain" | grep -qi aarch64; then
+      die "SystemManagerMain is not aarch64 after build: $(file -b "${RL_ROOT}/system_manager/SystemManagerMain")"
+    fi
+    log "SystemManagerMain OK (aarch64)"
   fi
 }
 

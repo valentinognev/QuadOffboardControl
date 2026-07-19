@@ -25,6 +25,7 @@ SSH_BASE_OPTS=()
 
 RSYNC_EXCLUDES=(
   --exclude='offline-wheels/'
+  --exclude='offline-binaries/'
   --exclude='.git/'
   --exclude='__pycache__/'
 )

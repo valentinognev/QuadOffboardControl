@@ -8,10 +8,10 @@
 #   Fleet UART   Role                         Typical /dev      Started by
 #   ──────────   ────                         ─────────────     ────────────
 #   UART1        LC29H DA — GPS/RTK rover (optional) /dev/ttyAMA0  startRtkCommPI.sh
-#   USB          LC29H EA — GPS/RTK rover (default) /dev/ttyUSB0 startRtkEaUSB.sh
+#   USB          LC29H EA — GPS/RTK rover (default) /dev/ttyUSB0 startRtkCommPI.sh
 #   UART2        Ground-station radio link    /dev/ttyAMA2      ZMQ_to_comm PY (--serialcomm)
 #   UART3        PX4 MAVLink telemetry        /dev/ttyAMA3      mavlink-server (separate service)
-#   UART4        NMEA / GPS out to PX4         /dev/ttyAMA4      startRtkEaUSB.sh / startRtkCommPI.sh (emulate_gps_to_px4)
+#   UART4        NMEA / GPS out to PX4         /dev/ttyAMA4      startRtkCommPI.sh (emulate_gps_to_px4)
 #
 #   RTK corrections (saved in ~/.config/companion-rtk; switch with switch_rtk_WIFI_RF.sh):
 #     WiFi  — rover_zmq ZMQ PULL tcp://<GS_IP>:5560  (GS: startRtkWiFiGS.sh)
@@ -19,7 +19,7 @@
 #
 # Usage:
 #   ./start_companion_drone_tmux.sh <drone_id> [CPP|PY|python]
-#   ./start_companion_drone_tmux.sh --drone-id=N [--version=PY] [--serial=DEVICE] [--session=NAME]
+#   ./start_companion_drone_tmux.sh --drone-id=N [--version=CPP|PY] [--serial=DEVICE] [--session=NAME]
 #   ./start_companion_drone_tmux.sh --kill [--session=NAME]
 #
 # Pi 5 example (GS radio on UART2, drone 1):
@@ -106,8 +106,10 @@ COMPANION_PYTHON="${COMPANION_PYTHON:-${VENV_PYTHON}}"
 if [ -x "${COMPANION_PYTHON}" ]; then
     export PYTHON="${COMPANION_PYTHON}"
 fi
-GPS_EA_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkEaUSB.sh"
-GPS_DA_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkCommPI.sh"
+# EA + DA both use startRtkCommPI.sh (port/baud choose the rover). Legacy startRtkEaUSB.sh is gone.
+GPS_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtkCommPI.sh"
+GPS_EA_LAUNCHER="${GPS_LAUNCHER}"
+GPS_DA_LAUNCHER="${GPS_LAUNCHER}"
 UART_DEPLOY_DOC="${SCRIPT_DIR}/RPi_second_UART_GPIO4_GPIO5_deployment.md"
 GPS_GUIDE="${CATSWARM_ROOT}/GPS_RTK/docs/guide-raspberry-pi-rover-px4.md"
 
@@ -124,14 +126,14 @@ UART3_PX4_MAVLINK="${COMPANION_UART3_PX4_MAVLINK:-/dev/ttyAMA3}"
 UART4_PX4_GPS_NMEA="${COMPANION_UART4_PX4_GPS_NMEA:-/dev/ttyAMA4}"
 
 DRONE_ID=""
-VERSION="PY"
+VERSION="CPP"
 SERIAL_DEVICE=""
 
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") <drone_id> [CPP|PY|python]
-  $(basename "$0") --drone-id=N [--version=PY] [--serial=DEVICE] [--session=SESSION]
+  $(basename "$0") <drone_id> [CPP|PY|python]   (default: CPP)
+  $(basename "$0") --drone-id=N [--version=CPP] [--serial=DEVICE] [--session=SESSION]
   $(basename "$0") --kill [--session=SESSION]
 
 Companion: tmux ${TMUX_SESSION} with hardware_adapter_<id> + GPS window (EA or DA).
@@ -264,12 +266,6 @@ if [ "${VERSION_UPPER}" = "PYTHON" ]; then
     VERSION_UPPER="PY"
 fi
 
-# RF RTK reassembly in GS 107-byte frames is implemented in Python ZMQ_to_comm only.
-if [ -n "${SERIAL_DEVICE}" ] && [ "${VERSION_UPPER}" = "CPP" ]; then
-    echo "Note: RF RTK requires PY ZMQ_to_comm; switching --version from CPP to PY." >&2
-    VERSION_UPPER="PY"
-fi
-
 if [ ! -f "${HW_SCRIPT}" ]; then
     echo "Error: hardware adapter script not found: ${HW_SCRIPT}" >&2
     exit 1
@@ -290,9 +286,63 @@ elif [ ! -e "${SERIAL_DEVICE}" ]; then
     echo "Warning: serial device not present: ${SERIAL_DEVICE}" >&2
 fi
 
-if [ ! -f "${GPS_EA_LAUNCHER}" ] || [ ! -f "${GPS_DA_LAUNCHER}" ]; then
-    echo "Error: GPS launcher not found under ${CATSWARM_ROOT}/GPS_RTK/" >&2
+if [ ! -f "${GPS_LAUNCHER}" ]; then
+    echo "Error: GPS launcher not found: ${GPS_LAUNCHER}" >&2
     exit 1
+fi
+
+# Resolve this drone's system_manager mission config (MultiInput/multiSetup.list, 1-indexed
+# by DRONE_ID) *before* starting the hardware adapter, so its FLIGHT_DATA_FOR_COMM /
+# COMM_NEIGHBOUR_DATA ports (zmqSysManagerOutPort / zmqSysManagerInPort) can be passed
+# through instead of silently falling back to base+i (which will not match system_manager).
+if [ ! -f "${MULTI_SETUP_LIST}" ]; then
+    echo "Error: multiSetup.list not found: ${MULTI_SETUP_LIST}" >&2
+    exit 1
+fi
+
+mapfile -t CONFIG_LINES < <(grep -v '^[[:space:]]*$\|^[[:space:]]*#' "${MULTI_SETUP_LIST}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+LINE_INDEX=$(( DRONE_ID - 1 ))
+if [ "${LINE_INDEX}" -lt 0 ] || [ "${LINE_INDEX}" -ge "${#CONFIG_LINES[@]}" ]; then
+    echo "Error: no system manager config for drone id ${DRONE_ID}." >&2
+    exit 1
+fi
+
+CONFIG_ENTRY="${CONFIG_LINES[${LINE_INDEX}]}"
+if [[ "${CONFIG_ENTRY}" = /* ]]; then
+    CONFIG_PATH="${CONFIG_ENTRY}"
+else
+    CONFIG_PATH="${CATSWARM_ROOT}/system_manager/MultiInput/${CONFIG_ENTRY}"
+fi
+
+if [ ! -f "${CONFIG_PATH}" ]; then
+    echo "Error: system manager config not found: ${CONFIG_PATH}" >&2
+    exit 1
+fi
+
+_read_mission_json_port() {
+    # Mission JSON allows // comments; strip them the same way system_manager.py /
+    # ObservationBoard app.py do before parsing.
+    "${PYTHON}" -c "
+import json, re, sys
+with open(sys.argv[1]) as f:
+    content = f.read()
+content = re.sub(r'//.*', '', content)
+try:
+    data = json.loads(content)
+except Exception:
+    sys.exit(0)
+val = data.get(sys.argv[2])
+if val is not None:
+    print(val)
+" "${CONFIG_PATH}" "$1" 2>/dev/null
+}
+
+MISSION_SYS_MANAGER_OUT="$(_read_mission_json_port zmqSysManagerOutPort)"
+MISSION_SYS_MANAGER_IN="$(_read_mission_json_port zmqSysManagerInPort)"
+
+if [ -z "${MISSION_SYS_MANAGER_OUT}" ] || [ -z "${MISSION_SYS_MANAGER_IN}" ]; then
+    echo "Warning: could not read zmqSysManagerOutPort/zmqSysManagerInPort from ${CONFIG_PATH};" >&2
+    echo "         ZMQ_to_comm will fall back to base+i ports and will NOT match system_manager." >&2
 fi
 
 if [[ "${_GPS_MODULE_EXPLICIT}" -eq 1 ]]; then
@@ -320,12 +370,29 @@ HW_CMD=( "${HW_SCRIPT}"
     "--session=${TMUX_SESSION}"
     "--drone-id=${DRONE_ID}"
     "--version=${VERSION_UPPER}"
+    # Real hardware: mavlink-server always bridges PX4 (UART3) to a single fixed
+    # 127.0.0.1:14540 (see /etc/mavlink-server/mavlink-server.conf), regardless of
+    # drone ID. hardware_adapter_multi.sh's default (14540+index) is only correct
+    # for the desktop multi-drone simulator where each simulated PX4 instance binds
+    # its own offset port. Without this override, mavlink_to_ZMQ listens on the
+    # wrong port and never receives MAVLink data (GPS/flight data silently stay at 0).
+    "--mavlink-udp=${COMPANION_MAVLINK_UDP_PORT:-14540}"
 )
 if [ -n "${SERIAL_DEVICE}" ]; then
     HW_CMD+=( "--serialcomm=${SERIAL_DEVICE}" )
     if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
         HW_CMD+=( "--rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}" )
+        # ZMQ_to_comm defaults telemetry TX to off when --rtk-zmq-bind is set (half-duplex
+        # UART: avoids TX colliding with RTCM RX). This topology needs both RTK downlink
+        # AND drone telemetry uplink on the same radio, so force TX back on explicitly.
+        HW_CMD+=( "--serial-comm-tx" )
     fi
+fi
+if [ -n "${MISSION_SYS_MANAGER_OUT}" ]; then
+    HW_CMD+=( "--zmqSysManagerOutPort=${MISSION_SYS_MANAGER_OUT}" )
+fi
+if [ -n "${MISSION_SYS_MANAGER_IN}" ]; then
+    HW_CMD+=( "--zmqSysManagerInPort=${MISSION_SYS_MANAGER_IN}" )
 fi
 
 echo "Starting hardware adapter (tmux layout)…"
@@ -344,30 +411,6 @@ sleep 2
 
 if ! tmux list-windows -t "${TMUX_SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${HW_WINDOW}"; then
     echo "Error: tmux window ${TMUX_SESSION}:${HW_WINDOW} not found after start." >&2
-    exit 1
-fi
-
-if [ ! -f "${MULTI_SETUP_LIST}" ]; then
-    echo "Error: multiSetup.list not found: ${MULTI_SETUP_LIST}" >&2
-    exit 1
-fi
-
-mapfile -t CONFIG_LINES < <(grep -v '^[[:space:]]*$\|^[[:space:]]*#' "${MULTI_SETUP_LIST}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-LINE_INDEX=$(( DRONE_ID - 1 ))
-if [ "${LINE_INDEX}" -lt 0 ] || [ "${LINE_INDEX}" -ge "${#CONFIG_LINES[@]}" ]; then
-    echo "Error: no system manager config for drone id ${DRONE_ID}." >&2
-    exit 1
-fi
-
-CONFIG_ENTRY="${CONFIG_LINES[${LINE_INDEX}]}"
-if [[ "${CONFIG_ENTRY}" = /* ]]; then
-    CONFIG_PATH="${CONFIG_ENTRY}"
-else
-    CONFIG_PATH="${CATSWARM_ROOT}/system_manager/MultiInput/${CONFIG_ENTRY}"
-fi
-
-if [ ! -f "${CONFIG_PATH}" ]; then
-    echo "Error: system manager config not found: ${CONFIG_PATH}" >&2
     exit 1
 fi
 

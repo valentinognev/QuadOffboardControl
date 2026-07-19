@@ -157,7 +157,7 @@ companion_gps_show_current_choice() {
             echo "  Module: EA (USB bench / primary rover)"
             echo "  Port:   ${ROVER_PORT} @ ${ROVER_BAUD}"
             echo "  PX4:    NMEA → ${COMPANION_PX4_GPS_PORT}"
-            echo "  Stack:  startRtkEaUSB.sh → rover_zmq + emulate_gps_to_px4"
+            echo "  Stack:  startRtkCommPI.sh (EA USB) → rover_zmq + emulate_gps_to_px4"
             ;;
         da)
             echo "  Module: DA (UART flight rover)"
@@ -216,11 +216,9 @@ companion_gps_apply_module() {
 companion_gps_launcher_path() {
     local root="${1:-}"
     companion_gps_apply_module
-    if [[ "${COMPANION_GPS_MODULE}" == "ea" ]]; then
-        printf '%s/GPS_RTK/startRtkEaUSB.sh\n' "${root}"
-    else
-        printf '%s/GPS_RTK/startRtkCommPI.sh\n' "${root}"
-    fi
+    # Both EA USB and DA UART use startRtkCommPI.sh (rover port/baud select the module).
+    # Legacy name startRtkEaUSB.sh was never shipped in GPS_RTK; keep messages for operators.
+    printf '%s/GPS_RTK/startRtkCommPI.sh\n' "${root}"
 }
 
 companion_gps_start_in_tmux() {

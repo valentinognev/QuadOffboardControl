@@ -63,10 +63,29 @@ if [ "${#wheels[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Map pip distribution name → importable module (strip pins first).
+pkg_import_name() {
+  local raw="$1" name
+  name="${raw%%[=<>!~]*}"
+  name="${name%%[*}"
+  name="${name,,}"  # lowercase
+  case "${name}" in
+    pyzmq) echo zmq ;;
+    pyserial) echo serial ;;
+    pillow) echo PIL ;;
+    opencv-python|opencv-python-headless) echo cv2 ;;
+    pyyaml) echo yaml ;;
+    msgpack|msgpack-python) echo msgpack ;;
+    protobuf) echo google.protobuf ;;
+    meson) echo mesonbuild ;;
+    *) echo "${name//-/_}" ;;
+  esac
+}
+
 already_ok=()
 need_install=()
 for pkg in "${PACKAGES[@]}"; do
-  import_name="${pkg//-/_}"
+  import_name="$(pkg_import_name "${pkg}")"
   if "${PYTHON}" -c "import ${import_name}" 2>/dev/null; then
     already_ok+=("${pkg}")
   else
@@ -85,6 +104,6 @@ echo "Installing from ${WHEELS_DIR} into ${CONDA_ENV}: ${need_install[*]}…"
 "${PIP}" install --no-index --find-links="${WHEELS_DIR}" "${need_install[@]}"
 
 for pkg in "${need_install[@]}"; do
-  import_name="${pkg//-/_}"
+  import_name="$(pkg_import_name "${pkg}")"
   "${PYTHON}" -c "import ${import_name}; print('OK:', '${pkg}', getattr(${import_name}, '__version__', '(import ok)'))"
 done

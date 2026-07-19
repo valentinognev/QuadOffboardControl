@@ -87,7 +87,7 @@ Starts tmux session **`catswarm_sim`** (default) with:
 
 | Window | Contents |
 |--------|----------|
-| **`hardware_adapter_<id>`** | mavlink_to_ZMQ, zmq_commands_mavlink, comm_to_ZMQ, **ZMQ_to_comm (PY)**, system manager |
+| **`hardware_adapter_<id>`** | mavlink_to_ZMQ, zmq_commands_mavlink, comm_to_ZMQ, ZMQ_to_comm, system manager — **C/C++ by default** (2026-07-16; see below) |
 | **`gps_rtk`** | **`startRtkCommPI.sh`** — `rover_zmq` + `emulate_gps_to_px4` |
 
 ### Pi 5 UART layout (fleet)
@@ -104,10 +104,15 @@ Starts tmux session **`catswarm_sim`** (default) with:
 ```
 GS PC:  BS → base_zmq → gs_rtk_serial → comm /dev/ttyUSB0
               (RF)
-Pi:     /dev/ttyAMA2 → ZMQ_to_comm.py (reassemble) → ZMQ tcp://127.0.0.1:5562
+Pi:     /dev/ttyAMA2 → ZMQ_to_comm[_c] (reassemble) → ZMQ tcp://127.0.0.1:5562
               → rover_zmq.py → /dev/ttyAMA0 (DA)
               → emulate_gps_to_px4.py → /dev/ttyAMA4 (PX4)
 ```
+
+RTK reassembly + GS frame forwarding now have full parity between the Python and C
+(`ZMQ_to_comm_c`) hardware adapters (`--rtk-zmq-bind`, `--zmq-gs-forward-port`,
+`--serial-comm-tx`/`--no-serial-comm-tx`; see `hardware_adapter/README.md` and
+`hardware_adapter/UPDATES.md` §v1.11.0).
 
 Ground station must run **`~/RL/GPS_RTK/startRtkCommGS.sh`** (or equivalent). See [GPS_RTK/docs/guide-ground-station-network.md](../GPS_RTK/docs/guide-ground-station-network.md).
 
@@ -122,7 +127,7 @@ On Pi 5, **`--serial`** defaults to **`/dev/ttyAMA2`** when omitted.
 | Option | Meaning |
 |--------|---------|
 | **`1`** / **`--drone-id=N`** | Drone index (must match `system_manager/MultiInput/multiSetup.list`) |
-| **`--version=PY`** | Python hardware adapter (default; **required** for RF RTK reassembly) |
+| **`--version=CPP`** | Hardware adapter + system manager version: **`CPP`** (default, 2026-07-16+) or **`PY`**. Both support RF RTK reassembly. |
 | **`--serial=DEVICE`** | GS comm radio device (Pi: **`/dev/ttyAMA2`**) |
 | **`--session=NAME`** | tmux session (default **`catswarm_sim`**) |
 
@@ -138,11 +143,19 @@ Attach: **`tmux attach -t catswarm_sim`**
 
 Stop: **`./start_companion_drone_tmux.sh --kill`**
 
-### Python on the Pi
+### C/C++ vs Python on the Pi
 
-RF RTK reassembly lives in **`hardware_adapter/python/ZMQ_to_comm.py`** (Python only; the C binary has no GS frame reassembly).
+**Default is C/C++** (`ZMQ_to_comm_c`, `comm_to_ZMQ_c`, `mavlink_to_ZMQ`, `zmq_commands_mavlink`,
+`SystemManagerMain`), including RF RTK reassembly and GS command-frame forwarding
+(`hardware_adapter/UPDATES.md` §v1.11.0). Force the Python stack with `--version=PY` (source
+in `hardware_adapter/python/ZMQ_to_comm.py`, `system_manager/system_managerPY/`).
 
-Recommended interpreter: **`/home/pi/miniconda/envs/RL/bin/python`** with **`pyzmq`** and **`pyserial`** installed:
+Config JSONs written on the dev machine (absolute paths) work unmodified on either stack:
+Python via `system_managerPY/path_utils.py`, C++ via `system_managerCPP/Include/utils/PathUtils.h`
+(`system_manager/UPDATES.md`, 2026-07-16 entry).
+
+Python mode still requires **`/home/pi/miniconda/envs/RL/bin/python`** with **`pyzmq`** and
+**`pyserial`** installed:
 
 ```bash
 /home/pi/miniconda/envs/RL/bin/pip install pyzmq pyserial
@@ -160,8 +173,10 @@ When updating RF RTK or companion behaviour, deploy these paths under **`~/RL/`*
 | `GPS_RTK/startRtkCommPI.sh` | GPS tmux launcher (ZMQ bridge mode) |
 | `startup_scripts/util/` | Shared GNSS + companion config libraries |
 | `startup_scripts/startInitRoverPI.sh` | One-time rover init on Pi |
-| `hardware_adapter/python/{ZMQ_to_comm.py, gs_command_frame.py}` | Serial RX + RTK reassembly |
-| `hardware_adapter/hardware_adapter_multi.sh` | PY mode + miniconda **`PYBIN`** |
+| `hardware_adapter/python/{ZMQ_to_comm.py, gs_command_frame.py}` | Serial RX + RTK reassembly (Python fallback, `--version=PY`) |
+| `hardware_adapter/{src,include}/*`, `hardware_adapter/Makefile` | C sources — rebuild `bin/ZMQ_to_comm_c` etc. on the Pi (`make`) after syncing |
+| `hardware_adapter/hardware_adapter_multi.sh` | Launches C or PY mode + miniconda **`PYBIN`** |
+| `system_manager/system_managerCPP/{Include,Src}/*`, `CMakeLists.txt` | C++ sources — rebuild `SystemManagerMain` on the Pi after syncing |
 | `startup_scripts/start_companion_drone_tmux.sh` | Companion launcher |
 | `startup_scripts/switch_{EAUSB_DAUART,rtk_WIFI_RF}.sh` | Operator restart/switch scripts |
 | `GPS_RTK/docs/*.md`, `GPS_RTK/combination/README.md` | Operator docs |
