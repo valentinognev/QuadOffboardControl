@@ -2,6 +2,15 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-20] Deploy: companion apt package set + offline-debs
+- Canonical lists: `COMPANION_APT_SYSTEM` / `COMPANION_APT_BUILD` (`libeigen3-dev`, `libzmq3-dev`, cmake, …) / optional `libcppzmq-dev`.
+- `phase_build` always `ensure_companion_build_packages` (Update skips `phase_system`).
+- Offline fallback: `offline-debs/` + `fetch-offline-debs.sh`; OB rsyncs debs with deploy scripts.
+
+## [2026-07-20] Deploy build: install Eigen3 for SystemManagerCPP
+- Soft Update `phase_build` failed on Pis without Eigen (`find_package(Eigen3)`).
+- `phase_system` installs `libeigen3-dev`; `phase_build` installs it only if missing (offline-safe). `libcppzmq-dev` optional (vendored header).
+
 ## [2026-07-20] Deploy/boot: ensure PX4 NMEA UART0 before reboot
 - `ensure_companion_uart_ports.sh` + `companion_gps_ensure_ports`: migrate saved `COMPANION_PX4_GPS_PORT` **ttyAMA4→ttyAMA0**, keep DA off UART0, validate tty nodes.
 - Runs from companion boot wrapper, deploy `phase_verify`, and ObservationBoard `deploy_pi5` after update (before reboot).

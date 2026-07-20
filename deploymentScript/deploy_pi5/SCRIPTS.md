@@ -15,6 +15,7 @@ All shell scripts support `-h`, `--help`, or `help`.
 | Install companion at boot | `sudo ~/deploy_pi5/install-companion-boot.sh 3` |
 | Start companion manually | `~/RL/startup_scripts/start_companion_drone_tmux.sh 3` |
 | Install missing Python pkg (Pi offline) | `~/deploy_pi5/pull-offline-packages.sh --from=valentin@192.168.0.39 matplotlib --install` |
+| Fetch apt .debs for offline Pi build | `~/deploy_pi5/fetch-offline-debs.sh` (on host; rsynced as `offline-debs/`) |
 | Push scripts Pi → dev PC | `~/deploy_pi5/push-deploy-scripts-to-dev.sh valentin@192.168.0.39` |
 
 ---
@@ -30,11 +31,11 @@ All shell scripts support `-h`, `--help`, or `help`.
 | Phase | What it does |
 |-------|----------------|
 | `all` | system → repos → mavlink → python → build → verify |
-| `system` | apt packages, `dialout` group, `/boot/firmware/config.txt` UART overlays |
+| `system` | apt packages (`COMPANION_APT_SYSTEM` + `COMPANION_APT_BUILD`, incl. **libeigen3-dev**), `dialout`, UART overlays |
 | `repos` | git clone/pull, `--from-dev` / `--push-to` rsync (incl. `startup_scripts`), or verify existing `~/RL/startup_scripts` |
 | `mavlink` | mavlink-server binary, config template, systemd unit |
 | `python` | Miniconda + `RL` env (pyzmq, pyserial, pymavlink, matplotlib, torch, …) |
-| `build` | `make` in `hardware_adapter` (+ optional C++ system manager) |
+| `build` | ensure build apt pkgs (Eigen/ZMQ/cmake) then `make` HA + optional C++ SM |
 | `verify` | import checks, optional frame verify, service status |
 
 **Notable options:**
@@ -94,6 +95,16 @@ sudo ~/deploy_pi5/mavlink-server-configuration.sh --fleet-preset
 **Fleet defaults:** serial `/dev/ttyAMA3` @ 921600, UDP client `127.0.0.1:14540`, TCP server `0.0.0.0:5760`, web UI `0.0.0.0:8080`.
 
 ---
+
+### `fetch-offline-debs.sh`
+
+**Run on the networked host.** Downloads companion build `.deb` files (notably `libeigen3-dev`) into `offline-debs/`. Soft Update rsyncs that folder to the Pi; `phase_build`/`phase_system` install from apt first, then fall back to these debs when mirrors are unreachable.
+
+```bash
+~/deploy_pi5/fetch-offline-debs.sh
+# or from the git tree:
+./fetch-offline-debs.sh
+```
 
 ### `pull-offline-packages.sh`
 

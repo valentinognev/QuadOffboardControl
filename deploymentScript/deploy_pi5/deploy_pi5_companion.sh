@@ -79,6 +79,25 @@ SYNC_COMPONENTS=(
 )
 SYNC_SIM_COMPONENT="general_infrastructure:CatSwarm/general_infrastructure"
 
+# Apt packages for companion (HA C bridges + SystemManagerCPP).
+# Required: must be present before --build-cpp-sysmgr / make.
+# Optional: best-effort (cppzmq is also vendored under system_managerCPP/third_party).
+COMPANION_APT_SYSTEM=(
+  git tmux curl wget ca-certificates rsync
+  ninja-build meson
+  python3 python3-venv python3-dev
+  libtool autoconf automake
+)
+COMPANION_APT_BUILD=(
+  build-essential cmake pkg-config
+  libzmq3-dev libeigen3-dev
+)
+COMPANION_APT_OPTIONAL=(
+  libcppzmq-dev
+)
+# Local .deb cache for offline Pis (Architecture:all + arm64). See fetch-offline-debs.sh.
+OFFLINE_DEBS_DIR="${OFFLINE_DEBS_DIR:-${SCRIPT_DIR}/offline-debs}"
+
 RSYNC_EXCLUDES=(
   --exclude='.git'
   --exclude='node_modules'
@@ -632,24 +651,112 @@ phase_enabled() {
   [ "${PHASE}" = "all" ] || [ "${PHASE}" = "${p}" ]
 }
 
+# --- apt helpers (online + offline-debs fallback) ---
+
+package_installed() {
+  local pkg="$1"
+  dpkg -s "${pkg}" >/dev/null 2>&1
+}
+
+# Install one package from OFFLINE_DEBS_DIR if a matching .deb exists.
+install_pkg_from_offline_deb() {
+  local pkg="$1"
+  local deb=""
+  local f
+  [ -d "${OFFLINE_DEBS_DIR}" ] || return 1
+  # Prefer exact name prefix: libeigen3-dev_*.deb
+  for f in "${OFFLINE_DEBS_DIR}/${pkg}_"*.deb "${OFFLINE_DEBS_DIR}/${pkg}"*.deb; do
+    [ -f "${f}" ] || continue
+    deb="${f}"
+    break
+  done
+  [ -n "${deb}" ] || return 1
+  log "offline-debs: dpkg -i $(basename "${deb}")"
+  dpkg -i "${deb}" || {
+    apt-get install -y -f --no-install-recommends || true
+    dpkg -i "${deb}"
+  }
+}
+
+# Ensure listed packages: apt if online, else offline-debs/. Returns 0 if all present.
+ensure_apt_packages() {
+  local -a pkgs=("$@")
+  local -a missing=()
+  local pkg
+  local apt_extra=()
+  progress_enabled && apt_extra=(-o Dpkg::Progress-Fancy=1)
+
+  for pkg in "${pkgs[@]}"; do
+    package_installed "${pkg}" || missing+=("${pkg}")
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    log "apt packages already present: ${pkgs[*]}"
+    return 0
+  fi
+
+  log "installing apt packages: ${missing[*]}"
+  if apt-get "${apt_extra[@]}" update -qq \
+    && apt-get "${apt_extra[@]}" install -y --no-install-recommends "${missing[@]}"; then
+    return 0
+  fi
+
+  log "apt install failed or offline — trying ${OFFLINE_DEBS_DIR}"
+  local still=()
+  for pkg in "${missing[@]}"; do
+    if package_installed "${pkg}"; then
+      continue
+    fi
+    if install_pkg_from_offline_deb "${pkg}"; then
+      continue
+    fi
+    still+=("${pkg}")
+  done
+  if [ "${#still[@]}" -gt 0 ]; then
+    log "ERROR: missing packages: ${still[*]}"
+    log "  online: sudo apt-get install -y ${still[*]}"
+    log "  offline: place .debs in ${OFFLINE_DEBS_DIR} (run fetch-offline-debs.sh on host)"
+    return 1
+  fi
+  return 0
+}
+
+ensure_companion_build_packages() {
+  ensure_apt_packages "${COMPANION_APT_BUILD[@]}" \
+    || die "companion build packages missing (need: ${COMPANION_APT_BUILD[*]})"
+  # Optional cppzmq — ignore failure (vendored zmq.hpp).
+  if ! package_installed libcppzmq-dev; then
+    apt-get install -y --no-install-recommends libcppzmq-dev 2>/dev/null \
+      || install_pkg_from_offline_deb libcppzmq-dev \
+      || log "NOTE: libcppzmq-dev not available (OK — vendored zmq.hpp)"
+  fi
+}
+
 # --- system ---
 
 phase_system() {
   progress_tick "system packages & UART"
   log "=== phase: system ==="
   export DEBIAN_FRONTEND=noninteractive
-  local apt_extra=()
-  progress_enabled && apt_extra=(-o Dpkg::Progress-Fancy=1)
-  apt-get "${apt_extra[@]}" update -qq
-  apt-get "${apt_extra[@]}" install -y --no-install-recommends \
-    git tmux curl wget ca-certificates rsync \
-    build-essential cmake ninja-build meson pkg-config \
-    libzmq3-dev python3 python3-venv python3-dev \
-    libtool autoconf automake
+
+  ensure_apt_packages "${COMPANION_APT_SYSTEM[@]}" "${COMPANION_APT_BUILD[@]}" \
+    || die "phase_system: required apt packages failed"
+  # Optional packages (do not fail the deploy).
+  local opt
+  for opt in "${COMPANION_APT_OPTIONAL[@]}"; do
+    if package_installed "${opt}"; then
+      continue
+    fi
+    apt-get install -y --no-install-recommends "${opt}" 2>/dev/null \
+      || install_pkg_from_offline_deb "${opt}" \
+      || log "NOTE: optional package ${opt} not installed"
+  done
+
   if [ "${FROM_DEV_MODE}" -eq 1 ]; then
     # Prefer already-installed /usr/local wrapper when apt/mirrors are unreachable.
     if ! command -v sshpass >/dev/null 2>&1; then
-      apt-get "${apt_extra[@]}" install -y sshpass
+      apt-get install -y sshpass \
+        || install_pkg_from_offline_deb sshpass \
+        || die "sshpass required for --from-dev"
     else
       log "sshpass already present ($(command -v sshpass)); skipping apt install"
     fi
@@ -1239,7 +1346,9 @@ phase_build() {
   progress_tick "build C bridges"
   log "=== phase: build ==="
   [ -d "${RL_ROOT}/hardware_adapter" ] || die "missing ${RL_ROOT}/hardware_adapter (run repos phase)"
-  make -C "${RL_ROOT}/hardware_adapter" install-deps 2>/dev/null || apt-get install -y libzmq3-dev
+  export DEBIAN_FRONTEND=noninteractive
+  # Update often skips phase_system — always ensure HA/SM build deps (incl. Eigen3).
+  ensure_companion_build_packages
   run_as_user make -C "${RL_ROOT}/hardware_adapter" -j"$(nproc)"
 
   if [ "${BUILD_CPP_SYSMGR}" -eq 1 ]; then
