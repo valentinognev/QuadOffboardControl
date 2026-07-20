@@ -13,7 +13,7 @@
 #   COMPANION_GPS_MODULE        ea | da  (explicit one-shot; use save flag to persist)
 #   ROVER_PORT                  EA USB serial when module=ea (default: /dev/ttyUSB0)
 #   ROVER_BAUD                  EA baud when module=ea (default: 460800)
-#   ROVER_PORT_UART             DA UART serial when module=da (default: /dev/ttyAMA0)
+#   ROVER_PORT_UART             DA UART serial when module=da (default: /dev/ttyAMA4)
 #   ROVER_BAUD_UART             DA baud when module=da (default: 115200)
 #   COMPANION_PX4_GPS_PORT      NMEA to PX4 (default: /dev/ttyAMA0 = UART0 GPIO14 TX)
 #   COMPANION_GPS_WINDOW        tmux window override
@@ -28,6 +28,9 @@
 : "${ROVER_BAUD_UART:=115200}"
 : "${COMPANION_PX4_GPS_PORT:=/dev/ttyAMA0}"
 : "${COMPANION_GPS_STATE_FILE:=${HOME}/.config/companion-gps}"
+# Fleet standard: NMEA→PX4 on UART0 (GPIO14 TX). Legacy installs saved ttyAMA4.
+: "${COMPANION_PX4_GPS_PORT_REQUIRED:=/dev/ttyAMA0}"
+: "${COMPANION_DA_UART_REQUIRED:=/dev/ttyAMA4}"
 
 companion_gps_module_label() {
     case "${COMPANION_GPS_MODULE}" in
@@ -39,6 +42,86 @@ companion_gps_module_label() {
 
 companion_gps_state_file() {
     printf '%s\n' "${COMPANION_GPS_STATE_FILE}"
+}
+
+# Migrate legacy UART roles and persist ~/.config/companion-gps.
+# Returns 0 always unless COMPANION_VALIDATE_UART_STRICT=1 and a required device is missing.
+companion_gps_ensure_ports() {
+    local migrated=0
+    local strict="${COMPANION_VALIDATE_UART_STRICT:-0}"
+    local px4_need="${COMPANION_PX4_GPS_PORT_REQUIRED}"
+    local da_need="${COMPANION_DA_UART_REQUIRED}"
+    local missing=0
+    local dev
+
+    : "${COMPANION_PX4_GPS_PORT:=${px4_need}}"
+    : "${ROVER_PORT_UART:=${da_need}}"
+
+    # Legacy: NMEA→PX4 was UART4; fleet wiring moved TX to UART0 / GPIO14.
+    if [[ "${COMPANION_PX4_GPS_PORT}" == "/dev/ttyAMA4" ]]; then
+        echo "companion_gps: migrating COMPANION_PX4_GPS_PORT /dev/ttyAMA4 → ${px4_need}" >&2
+        COMPANION_PX4_GPS_PORT="${px4_need}"
+        migrated=1
+    fi
+    if [[ -z "${COMPANION_PX4_GPS_PORT}" ]]; then
+        COMPANION_PX4_GPS_PORT="${px4_need}"
+        migrated=1
+    fi
+    # Avoid DA rover and PX4 NMEA sharing UART0.
+    if [[ "${ROVER_PORT_UART}" == "/dev/ttyAMA0" && "${COMPANION_PX4_GPS_PORT}" == "/dev/ttyAMA0" ]]; then
+        echo "companion_gps: migrating ROVER_PORT_UART /dev/ttyAMA0 → ${da_need} (PX4 owns UART0)" >&2
+        ROVER_PORT_UART="${da_need}"
+        migrated=1
+    fi
+    if [[ "${COMPANION_DA_PORT:-}" == "/dev/ttyAMA0" && "${COMPANION_PX4_GPS_PORT}" == "/dev/ttyAMA0" ]]; then
+        COMPANION_DA_PORT="${da_need}"
+        migrated=1
+    fi
+
+    if [[ "${migrated}" -eq 1 ]] || [[ ! -f "$(companion_gps_state_file)" ]]; then
+        : "${COMPANION_GPS_MODULE:=ea}"
+        companion_gps_save_module
+        if [[ "${migrated}" -eq 1 ]]; then
+            echo "companion_gps: saved UART roles → $(companion_gps_state_file)" >&2
+        else
+            echo "companion_gps: wrote defaults → $(companion_gps_state_file)" >&2
+        fi
+        echo "  PX4 NMEA: ${COMPANION_PX4_GPS_PORT}" >&2
+        echo "  DA UART:  ${ROVER_PORT_UART}" >&2
+    fi
+
+    for dev in "${COMPANION_PX4_GPS_PORT}" /dev/ttyAMA2 /dev/ttyAMA3; do
+        if [[ ! -e "${dev}" ]]; then
+            echo "companion_gps: WARNING: ${dev} not present (overlays/reboot/wiring?)" >&2
+            missing=1
+        else
+            echo "companion_gps: OK ${dev}" >&2
+        fi
+    done
+    case "$(printf '%s' "${COMPANION_GPS_MODULE:-ea}" | tr '[:upper:]' '[:lower:]')" in
+        da|uart|serial|d)
+            if [[ ! -e "${ROVER_PORT_UART}" ]]; then
+                echo "companion_gps: WARNING: DA rover ${ROVER_PORT_UART} not present" >&2
+                missing=1
+            fi
+            ;;
+        *)
+            if [[ ! -e "${ROVER_PORT:-/dev/ttyUSB0}" ]]; then
+                echo "companion_gps: NOTE: EA rover ${ROVER_PORT:-/dev/ttyUSB0} not present yet (USB)" >&2
+            fi
+            ;;
+    esac
+
+    if [[ "${COMPANION_PX4_GPS_PORT}" != "${px4_need}" ]]; then
+        echo "companion_gps: WARNING: COMPANION_PX4_GPS_PORT=${COMPANION_PX4_GPS_PORT} (fleet standard is ${px4_need})" >&2
+    fi
+
+    export COMPANION_PX4_GPS_PORT ROVER_PORT_UART ROVER_PORT ROVER_BAUD ROVER_BAUD_UART
+    if [[ "${strict}" == "1" && "${missing}" -eq 1 ]]; then
+        echo "companion_gps: ERROR: UART validation failed (COMPANION_VALIDATE_UART_STRICT=1)" >&2
+        return 1
+    fi
+    return 0
 }
 
 companion_gps_load_saved() {
@@ -85,6 +168,7 @@ companion_gps_load_saved() {
     elif [[ -n "${legacy_da_baud}" ]]; then
         ROVER_BAUD_UART="${legacy_da_baud}"
     fi
+    # COMPANION_PX4_GPS_PORT is set by sourcing the state file (if present).
     return 0
 }
 
@@ -143,6 +227,8 @@ companion_gps_resolve_module() {
             COMPANION_GPS_SOURCE=explicit
         fi
     fi
+    # Always migrate/validate UART roles after resolve (persists AMA4→AMA0 etc.).
+    companion_gps_ensure_ports || true
     export COMPANION_GPS_SOURCE
 }
 

@@ -133,4 +133,10 @@ if [[ "${BOOT_GPS_MODULE}" == "ea" ]]; then
 fi
 
 wait_for_uarts
+# Migrate legacy COMPANION_PX4_GPS_PORT=ttyAMA4 → ttyAMA0 and validate nodes.
+if [ -f "${RL_ROOT}/startup_scripts/util/ensure_companion_uart_ports.sh" ]; then
+    # shellcheck disable=SC1091
+    bash "${RL_ROOT}/startup_scripts/util/ensure_companion_uart_ports.sh" \
+        || echo "companion-drone: WARNING: UART port ensure reported issues" >&2
+fi
 exec "${LAUNCHER}" "${DRONE_ID}"

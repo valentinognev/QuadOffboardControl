@@ -2,6 +2,10 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-20] Deploy/boot: ensure PX4 NMEA UART0 before reboot
+- `ensure_companion_uart_ports.sh` + `companion_gps_ensure_ports`: migrate saved `COMPANION_PX4_GPS_PORT` **ttyAMA4→ttyAMA0**, keep DA off UART0, validate tty nodes.
+- Runs from companion boot wrapper, deploy `phase_verify`, and ObservationBoard `deploy_pi5` after update (before reboot).
+
 ## [2026-07-20] Pi NMEA→PX4 on UART0 + EA 10 Hz
 - `startup_scripts`: NMEA→PX4 default **`/dev/ttyAMA0`** (GPIO14 TX); optional DA UART default **`/dev/ttyAMA4`**; rover init phase-2 docs **10 Hz**.
 - UART tables in `startup_scripts/README.md` and `deploy_pi5/SCRIPTS.md` updated (EA USB fleet path).

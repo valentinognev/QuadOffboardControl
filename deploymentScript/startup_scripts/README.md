@@ -34,7 +34,7 @@ All launchers in **`startup_scripts/`** and **`GPS_RTK/`** share one naming sche
 
 Legacy names (`BS_PORT`, `DA_PORT`, `EA_PORT`, `COMPANION_EA_PORT`, …) are accepted with a deprecation warning.
 
-Companion GPS state (`~/.config/companion-gps`) stores **`ROVER_PORT`** / **`ROVER_BAUD`** (EA USB) and **`ROVER_PORT_UART`** / **`ROVER_BAUD_UART`** (DA UART).
+Companion GPS state (`~/.config/companion-gps`) stores **`ROVER_PORT`** / **`ROVER_BAUD`** (EA USB), **`ROVER_PORT_UART`** / **`ROVER_BAUD_UART`** (DA UART), and **`COMPANION_PX4_GPS_PORT`** (NMEA→PX4, fleet **`/dev/ttyAMA0`**). Deploy/boot run **`util/ensure_companion_uart_ports.sh`** to migrate legacy **`ttyAMA4`** → **`ttyAMA0`** and validate device nodes.
 
 ## `startInitRoverPI.sh`
 

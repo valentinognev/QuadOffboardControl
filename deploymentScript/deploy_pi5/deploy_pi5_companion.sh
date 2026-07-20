@@ -668,10 +668,11 @@ phase_system() {
     cat >> "${cfg}" <<'EOF'
 
 # --- CatSwarm Pi 5 fleet UARTs (deploy_pi5_companion.sh) ---
-# uart0-pi5 → ttyAMA0 (GPIO 14/15)   LC29H DA
+# uart0-pi5 → ttyAMA0 (GPIO 14/15)   NMEA → PX4 (emulate_gps_to_px4)
 # uart2-pi5 → ttyAMA2 (GPIO 4/5)     GS comm radio
 # uart3-pi5 → ttyAMA3 (GPIO 8/9)     PX4 MAVLink
-# uart4-pi5 → ttyAMA4 (GPIO 12/13)   NMEA → PX4
+# uart4-pi5 → ttyAMA4 (GPIO 12/13)   optional LC29H DA rover
+# USB       → ttyUSB0                LC29H EA rover (fleet default)
 [pi4]
 dtoverlay=uart3
 
@@ -1287,6 +1288,20 @@ phase_verify() {
     fi
   done
 
+  # Persist fleet UART roles into ~/.config/companion-gps (AMA4→AMA0 migration).
+  local ensure_ports="${RL_ROOT}/startup_scripts/util/ensure_companion_uart_ports.sh"
+  if [ -x "${ensure_ports}" ] || [ -f "${ensure_ports}" ]; then
+    progress_tick "ensure companion UART ports"
+    log "ensuring companion-gps PX4 port (UART0 / ttyAMA0)…"
+    if run_as_user bash "${ensure_ports}"; then
+      log "companion UART ports OK (see companion-gps)"
+    else
+      log "WARNING: ensure_companion_uart_ports.sh reported issues (check wiring / reboot for overlays)"
+    fi
+  else
+    log "NOTE: missing ${ensure_ports} (sync startup_scripts)"
+  fi
+
   systemctl is-enabled mavlink-server.service >/dev/null && log "mavlink-server enabled at boot"
   systemctl is-enabled companion-drone.service >/dev/null && log "companion-drone enabled at boot"
   ls -la "${RL_ROOT}/hardware_adapter/bin/" 2>/dev/null | head -5 || true
@@ -1305,6 +1320,10 @@ Python:      ${CONDA_PREFIX}/envs/${CONDA_ENV}/bin/python
 
 If UART config was added, reboot once:
   sudo reboot
+
+Before/after reboot, companion GPS UART roles are migrated by:
+  ${RL_ROOT}/startup_scripts/util/ensure_companion_uart_ports.sh
+  (sets COMPANION_PX4_GPS_PORT=/dev/ttyAMA0 in ~/.config/companion-gps)
 
 After reboot:
   1. LC29H DA one-time init (power cycles required):
