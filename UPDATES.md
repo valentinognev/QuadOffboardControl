@@ -2,6 +2,9 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-20] Deploy: skip install when SystemManagerMain already in place
+- CMake writes `SystemManagerMain` to `~/RL/system_manager/`; `install` of same path failed. Now chown/chmod in place when built==dest.
+
 ## [2026-07-20] Deploy: companion apt package set + offline-debs
 - Canonical lists: `COMPANION_APT_SYSTEM` / `COMPANION_APT_BUILD` (`libeigen3-dev`, `libzmq3-dev`, cmake, …) / optional `libcppzmq-dev`.
 - `phase_build` always `ensure_companion_build_packages` (Update skips `phase_system`).

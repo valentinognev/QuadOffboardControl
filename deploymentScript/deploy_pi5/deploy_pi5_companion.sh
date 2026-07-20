@@ -1364,10 +1364,16 @@ phase_build() {
       built="${sm_cpp}/build/SystemManagerMain"
     fi
     [ -n "${built}" ] || die "SystemManagerMain not produced by build.sh"
-    install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0755 \
-      "${built}" "${RL_ROOT}/system_manager/SystemManagerMain"
-    if ! file -b "${RL_ROOT}/system_manager/SystemManagerMain" | grep -qi aarch64; then
-      die "SystemManagerMain is not aarch64 after build: $(file -b "${RL_ROOT}/system_manager/SystemManagerMain")"
+    local dest="${RL_ROOT}/system_manager/SystemManagerMain"
+    # CMake RUNTIME_OUTPUT_DIRECTORY is already system_manager/; skip self-copy.
+    if [ "$(readlink -f "${built}")" = "$(readlink -f "${dest}")" ]; then
+      chown "${DEPLOY_USER}:${DEPLOY_USER}" "${dest}"
+      chmod 0755 "${dest}"
+    else
+      install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0755 "${built}" "${dest}"
+    fi
+    if ! file -b "${dest}" | grep -qi aarch64; then
+      die "SystemManagerMain is not aarch64 after build: $(file -b "${dest}")"
     fi
     log "SystemManagerMain OK (aarch64)"
   fi
