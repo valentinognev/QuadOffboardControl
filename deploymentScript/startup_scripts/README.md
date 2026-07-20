@@ -40,17 +40,23 @@ Companion GPS state (`~/.config/companion-gps`) stores **`ROVER_PORT`** / **`ROV
 
 One-time LC29H setup: RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from the ground station.
 
-**DA on UART1** (defaults **`/dev/ttyAMA0`**, **115200**):
+**Default** (**`/dev/ttyUSB0`**, **115200** — override baud for EA with `--rover-baud=460800`):
 
 ```bash
 ~/RL/startup_scripts/startInitRoverPI.sh --phase1
-# power-cycle DA
+# power-cycle module
 ~/RL/startup_scripts/startInitRoverPI.sh --phase2
-# power-cycle DA
+# power-cycle module
 ~/RL/startup_scripts/startInitRoverPI.sh --verify-rtk --rtk-zmq-url=tcp://127.0.0.1:5562
 ```
 
-**EA on USB** (pass rover port/baud explicitly):
+**DA on UART1** (explicit):
+
+```bash
+~/RL/startup_scripts/startInitRoverPI.sh --rover-port=/dev/ttyAMA0 --rover-baud=115200 --phase1
+```
+
+**EA on USB** (explicit baud):
 
 ```bash
 ~/RL/startup_scripts/startInitRoverPI.sh --rover-port=/dev/ttyUSB0 --rover-baud=460800 --phase1
@@ -63,7 +69,7 @@ One-time LC29H setup: RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from 
 | **`--phase1`** | Set RTK rover mode + save to flash |
 | **`--phase2`** | Enable GGA, 5 Hz, disable noisy NMEA |
 | **`--verify-rtk`** | Inject GS RTCM (needs **`--rtk-zmq-url`** or **`--comm-serial=/dev/ttyAMA2`**) |
-| **`--rover-port`** / **`--rover-baud`** | Rover serial (DA defaults **`/dev/ttyAMA0`**, **115200**) |
+| **`--rover-port`** / **`--rover-baud`** | Rover serial (defaults **`/dev/ttyUSB0`**, **115200**) |
 
 Implementation calls **`~/RL/GPS_RTK/combination/rover_zmq.py`**.
 

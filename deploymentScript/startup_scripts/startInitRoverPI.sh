@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Raspberry Pi 5 — configure LC29H DA rover on UART1 (/dev/ttyAMA0).
+# Raspberry Pi 5 — configure LC29H rover (default /dev/ttyUSB0; override with --port).
 #
 # Run from ~/RL/startup_scripts on the Pi (same layout as start_companion_drone_tmux.sh).
 #
@@ -29,7 +29,7 @@ source "${SCRIPT_DIR}/util/gnss_serial_args.sh"
 
 PYTHON="${PYTHON:-python3}"
 _COMM_PYTHON_SET=0
-ROVER_PORT="${ROVER_PORT:-/dev/ttyAMA0}"
+ROVER_PORT="${ROVER_PORT:-/dev/ttyUSB0}"
 ROVER_BAUD="${ROVER_BAUD:-115200}"
 RTK_ZMQ_URL="${RTK_ZMQ_URL:-}"
 COMM_SERIAL="${COMM_SERIAL:-/dev/ttyAMA2}"
@@ -51,7 +51,7 @@ _help() {
   cat <<EOF
 Usage: ${_LAUNCHER} [options] [--phase1 | --phase2 | --verify-rtk]
 
-Configure LC29H rover on Pi UART1 (default ${ROVER_PORT} @ ${ROVER_BAUD}).
+Configure LC29H rover (default ${ROVER_PORT} @ ${ROVER_BAUD}).
 
   Rover   : ${ROVER_PORT} @ ${ROVER_BAUD}
   RTK     : ${RTK_ZMQ_URL:-<comm ${COMM_SERIAL} @ ${COMM_BAUD}>} (for --verify-rtk)
@@ -151,14 +151,22 @@ _rtk_verify_args() {
 
 run_phase1() {
   echo "startInitRoverPI.sh: PHASE 1 — RTK rover mode on ${ROVER_PORT} @ ${ROVER_BAUD}" >&2
-  "$PYTHON" "$ROVER_PY" --port "${ROVER_PORT}" --baud "${ROVER_BAUD}" \
-      --init-rover --no-forward --no-csv --no-position
+  if ! "$PYTHON" "$ROVER_PY" --port "${ROVER_PORT}" --baud "${ROVER_BAUD}" \
+      --init-rover --no-forward --no-csv --no-position; then
+    echo "startInitRoverPI.sh: ERROR: phase 1 aborted — no response from module on ${ROVER_PORT} @ ${ROVER_BAUD}." >&2
+    echo "  Fix port/baud/power/wiring, free the tty, then retry. Not continuing." >&2
+    exit 1
+  fi
 }
 
 run_phase2() {
   echo "startInitRoverPI.sh: PHASE 2 — NMEA config on ${ROVER_PORT} @ ${ROVER_BAUD}" >&2
-  "$PYTHON" "$ROVER_PY" --port "${ROVER_PORT}" --baud "${ROVER_BAUD}" \
-      --config-rover-nmea --no-forward --no-csv --no-position
+  if ! "$PYTHON" "$ROVER_PY" --port "${ROVER_PORT}" --baud "${ROVER_BAUD}" \
+      --config-rover-nmea --no-forward --no-csv --no-position; then
+    echo "startInitRoverPI.sh: ERROR: phase 2 aborted — no response from module on ${ROVER_PORT} @ ${ROVER_BAUD}." >&2
+    echo "  Fix port/baud/power/wiring, free the tty, then retry. Not continuing." >&2
+    exit 1
+  fi
 }
 
 run_verify_rtk() {
