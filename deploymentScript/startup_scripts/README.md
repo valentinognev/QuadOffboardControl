@@ -38,7 +38,7 @@ Companion GPS state (`~/.config/companion-gps`) stores **`ROVER_PORT`** / **`ROV
 
 ## `startInitRoverPI.sh`
 
-One-time LC29H setup: RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from the ground station.
+One-time LC29H setup: RTK rover mode, GGA + **10 Hz** NMEA, optional RTK verify from the ground station.
 
 **Default** (**`/dev/ttyUSB0`**, **115200** — override baud for EA with `--rover-baud=460800`):
 
@@ -67,7 +67,7 @@ One-time LC29H setup: RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from 
 | Option | Meaning |
 |--------|---------|
 | **`--phase1`** | Set RTK rover mode + save to flash |
-| **`--phase2`** | Enable GGA, 5 Hz, disable noisy NMEA |
+| **`--phase2`** | Enable GGA/RMC, **10 Hz**, disable noisy NMEA |
 | **`--verify-rtk`** | Inject GS RTCM (needs **`--rtk-zmq-url`** or **`--comm-serial=/dev/ttyAMA2`**) |
 | **`--rover-port`** / **`--rover-baud`** | Rover serial (defaults **`/dev/ttyUSB0`**, **115200**) |
 
@@ -100,10 +100,11 @@ Starts tmux session **`catswarm_sim`** (default) with:
 
 | UART | Device | Role |
 |------|--------|------|
-| UART1 | `/dev/ttyAMA0` | LC29H DA (RTK rover in) |
+| UART0 | `/dev/ttyAMA0` | NMEA out to PX4 (GPIO14 TX) via `emulate_gps_to_px4` |
 | UART2 | `/dev/ttyAMA2` | Ground-station comm radio (GS 107-byte frames) |
 | UART3 | `/dev/ttyAMA3` | PX4 MAVLink telemetry (`mavlink-server`) |
-| UART4 | `/dev/ttyAMA4` | NMEA out to PX4 |
+| UART4 | `/dev/ttyAMA4` | optional DA rover UART |
+| USB | `/dev/ttyUSB0` | LC29H EA rover (fleet default) |
 
 **RTK path (RF, no Wi‑Fi to GS for corrections):**
 
@@ -111,8 +112,8 @@ Starts tmux session **`catswarm_sim`** (default) with:
 GS PC:  BS → base_zmq → gs_rtk_serial → comm /dev/ttyUSB0
               (RF)
 Pi:     /dev/ttyAMA2 → ZMQ_to_comm[_c] (reassemble) → ZMQ tcp://127.0.0.1:5562
-              → rover_zmq.py → /dev/ttyAMA0 (DA)
-              → emulate_gps_to_px4.py → /dev/ttyAMA4 (PX4)
+              → rover_zmq.py → /dev/ttyUSB0 (EA)
+              → emulate_gps_to_px4.py → /dev/ttyAMA0 (PX4, GPIO14 TX)
 ```
 
 RTK reassembly + GS frame forwarding now have full parity between the Python and C

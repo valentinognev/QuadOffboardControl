@@ -15,7 +15,7 @@
 #   ROVER_BAUD                  EA baud when module=ea (default: 460800)
 #   ROVER_PORT_UART             DA UART serial when module=da (default: /dev/ttyAMA0)
 #   ROVER_BAUD_UART             DA baud when module=da (default: 115200)
-#   COMPANION_PX4_GPS_PORT      NMEA to PX4 (default: /dev/ttyAMA4)
+#   COMPANION_PX4_GPS_PORT      NMEA to PX4 (default: /dev/ttyAMA0 = UART0 GPIO14 TX)
 #   COMPANION_GPS_WINDOW        tmux window override
 #   COMPANION_GPS_STATE_FILE    Persistence file (default: ~/.config/companion-gps)
 #
@@ -24,9 +24,9 @@
 : "${COMPANION_GPS_MODULE:=}"
 : "${ROVER_PORT:=/dev/ttyUSB0}"
 : "${ROVER_BAUD:=460800}"
-: "${ROVER_PORT_UART:=/dev/ttyAMA0}"
+: "${ROVER_PORT_UART:=/dev/ttyAMA4}"
 : "${ROVER_BAUD_UART:=115200}"
-: "${COMPANION_PX4_GPS_PORT:=/dev/ttyAMA4}"
+: "${COMPANION_PX4_GPS_PORT:=/dev/ttyAMA0}"
 : "${COMPANION_GPS_STATE_FILE:=${HOME}/.config/companion-gps}"
 
 companion_gps_module_label() {

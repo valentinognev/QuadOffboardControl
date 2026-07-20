@@ -219,13 +219,13 @@ Canonical on the Pi: `~/RL/startup_scripts/`. On the dev PC: `~/RL/CatSwarm/gene
 ~/RL/startup_scripts/start_companion_drone_tmux.sh --kill
 ```
 
-**Pi 5 UART layout:** UART1 `/dev/ttyAMA0` (LC29H DA), UART2 `/dev/ttyAMA2` (GS radio), UART3 `/dev/ttyAMA3` (PX4 MAVLink), UART4 `/dev/ttyAMA4` (NMEA to PX4).
+**Pi 5 UART layout:** UART0 `/dev/ttyAMA0` (NMEA→PX4, GPIO14 TX), UART2 `/dev/ttyAMA2` (GS radio), UART3 `/dev/ttyAMA3` (PX4 MAVLink), UART4 `/dev/ttyAMA4` (optional DA), USB `/dev/ttyUSB0` (EA rover).
 
 ---
 
 ### `startInitRoverPI.sh`
 
-**One-time LC29H DA configuration** on UART1 (`/dev/ttyAMA0`): RTK rover mode, GGA + 5 Hz NMEA, optional RTK verify from ground station.
+**One-time LC29H configuration** (default `/dev/ttyUSB0`): RTK rover mode, GGA + **10 Hz** NMEA, optional RTK verify from ground station.
 
 ```bash
 ~/RL/startup_scripts/startInitRoverPI.sh --phase1

@@ -11,7 +11,8 @@
 #   USB          LC29H EA — GPS/RTK rover (default) /dev/ttyUSB0 startRtkCommPI.sh
 #   UART2        Ground-station radio link    /dev/ttyAMA2      ZMQ_to_comm PY (--serialcomm)
 #   UART3        PX4 MAVLink telemetry        /dev/ttyAMA3      mavlink-server (separate service)
-#   UART4        NMEA / GPS out to PX4         /dev/ttyAMA4      startRtkCommPI.sh (emulate_gps_to_px4)
+#   UART0        NMEA / GPS out to PX4         /dev/ttyAMA0      startRtkCommPI.sh (emulate_gps_to_px4; GPIO14 TX)
+#   UART4        optional DA rover UART        /dev/ttyAMA4      (when COMPANION_GPS_MODULE=da)
 #
 #   RTK corrections (saved in ~/.config/companion-rtk; switch with switch_rtk_WIFI_RF.sh):
 #     WiFi  — rover_zmq ZMQ PULL tcp://<GS_IP>:5560  (GS: startRtkWiFiGS.sh)
@@ -120,10 +121,12 @@ COMPANION_BASE_PORT_NUM="${COMPANION_BASE_PORT_NUM:-5560}"
 _RTK_MODE_EXPLICIT=0
 _GPS_MODULE_EXPLICIT=0
 
-UART1_GPS_DA="${COMPANION_UART1_GPS_DA:-/dev/ttyAMA0}"
+UART1_GPS_DA="${COMPANION_UART1_GPS_DA:-/dev/ttyAMA4}"
 UART2_GS_RADIO="${COMPANION_UART2_GS_RADIO:-/dev/ttyAMA2}"
 UART3_PX4_MAVLINK="${COMPANION_UART3_PX4_MAVLINK:-/dev/ttyAMA3}"
-UART4_PX4_GPS_NMEA="${COMPANION_UART4_PX4_GPS_NMEA:-/dev/ttyAMA4}"
+UART0_PX4_GPS_NMEA="${COMPANION_UART0_PX4_GPS_NMEA:-/dev/ttyAMA0}"
+# Back-compat alias (old name pointed at UART4):
+UART4_PX4_GPS_NMEA="${COMPANION_UART4_PX4_GPS_NMEA:-${UART0_PX4_GPS_NMEA}}"
 
 DRONE_ID=""
 VERSION="CPP"

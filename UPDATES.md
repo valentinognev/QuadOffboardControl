@@ -2,6 +2,10 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-20] Pi NMEA→PX4 on UART0 + EA 10 Hz
+- `startup_scripts`: NMEA→PX4 default **`/dev/ttyAMA0`** (GPIO14 TX); optional DA UART default **`/dev/ttyAMA4`**; rover init phase-2 docs **10 Hz**.
+- UART tables in `startup_scripts/README.md` and `deploy_pi5/SCRIPTS.md` updated (EA USB fleet path).
+
 ## [2026-01-24] MAVLink Routing & Compatibility Fixes
 - **Dynamic Port Configuration**:
     - Updated all flight command and mode transition logic to support shared (14550) and individual (14540+i / 14030+i) MAVLink ports.

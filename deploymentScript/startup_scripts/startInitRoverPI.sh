@@ -7,7 +7,7 @@
 #   Sends $PQTMCFGRCVRMODE,W,1 (rover mode) + $PQTMSAVEPAR.
 #
 # PHASE 2 — configure NMEA output (run once after power-cycle from phase 1):
-#   Enables GGA, 5 Hz rate, disables noisy sentences, saves to flash.
+#   Enables GGA, 10 Hz rate, disables noisy sentences, saves to flash.
 #
 # Optional --verify-rtk injects corrections from the ground station (RF comm or
 # companion ZMQ bridge) and prints fix / RTCM status for a short window.
@@ -66,7 +66,7 @@ $(gnss_serial_help_options)
   --verify-secs=SEC       Duration for --verify-rtk (default: 90)
   --python=PATH           Python interpreter
   --phase1                Phase 1 only (RTK rover mode + save)
-  --phase2                Phase 2 only (GGA + 5 Hz — after power cycle)
+  --phase2                Phase 2 only (GGA + 10 Hz — after power cycle)
   --verify-rtk            Inject station RTCM and print fix status (needs RTK source)
   -h, --help              Show this message
 
