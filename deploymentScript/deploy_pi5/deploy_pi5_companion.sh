@@ -374,7 +374,7 @@ Options:
   --local-rl-root=PATH   Dev PC ~/RL path for --push-to (default: \$HOME/RL)
   --run-remote           With --push-to: SSH to Pi and run this script (--skip-clone)
   --push-password=P      Pi SSH password for --run-remote (optional)
-  --phase=PHASE          Run one phase: all|system|repos|mavlink|python|build|verify
+  --phase=PHASE          Run one phase: all|system|peripherals|repos|mavlink|python|build|verify
   --rl-root=PATH         Target tree (default: ${RL_ROOT})
   --user=NAME            Repo owner (default: ${DEPLOY_USER})
   --skip-reboot-hint     Do not print reboot reminder after UART changes
@@ -395,13 +395,14 @@ Python (${CONDA_ENV} env): pyzmq, pyserial, pymavlink, matplotlib, torch, ...
   Or:         sudo $0 --pip-via-dev=user@192.168.0.39
 
 Phases:
-  system   apt, dialout, /boot/firmware/config.txt UART overlays
-  repos    git clone/pull, --from-dev/--push-to rsync (incl. startup_scripts), or verify existing ${RL_ROOT}/startup_scripts
-  mavlink  mavlink-server binary, config, systemd
-  companion  companion-drone systemd service (requires COMPANION_DRONE_ID=<id>)
-  python   Miniconda + RL env (torch, matplotlib, …; --with-ml adds opencv/plotly)
-  build    make in hardware_adapter (+ optional C++ system manager)
-  verify   import checks, optional frame verify, service status
+  system      apt, dialout, fleet fleet UART boot overlays (idempotent)
+  peripherals dialout + UART boot rewrite + companion-gps AMA4→AMA0 (Update always)
+  repos       git clone/pull, --from-dev/--push-to rsync (incl. startup_scripts), or verify existing ${RL_ROOT}/startup_scripts
+  mavlink     mavlink-server binary, config, systemd
+  companion   companion-drone systemd service (requires COMPANION_DRONE_ID=<id>)
+  python      Miniconda + RL env (torch, matplotlib, …; --with-ml adds opencv/plotly)
+  build       make in hardware_adapter (+ optional C++ system manager)
+  verify      import checks, companion-gps ensure, service status
 EOF
 }
 
@@ -767,19 +768,29 @@ phase_system() {
     log "added ${DEPLOY_USER} to dialout (log out/in or reboot for new sessions)"
   fi
 
-  local cfg
-  cfg="$(boot_config_path)"
-  log "UART boot config: ${cfg}"
+  ensure_fleet_uart_boot_config
 
-  if ! grep -q 'CatSwarm Pi 5 fleet UARTs' "${cfg}" 2>/dev/null; then
-    cat >> "${cfg}" <<'EOF'
+  # Legacy mavlink-router on ttyS0 conflicts with fleet layout; disable if installed.
+  if systemctl list-unit-files mavlink-router.service &>/dev/null; then
+    systemctl disable --now mavlink-router.service 2>/dev/null || true
+    log "disabled mavlink-router.service (use mavlink-server on ttyAMA3)"
+  fi
+}
 
+# Canonical Pi 5 UART layout version. Bump when overlays/roles change so Update rewrites.
+FLEET_UART_LAYOUT_VERSION=3
+
+fleet_uart_boot_block() {
+  cat <<EOF
 # --- CatSwarm Pi 5 fleet UARTs (deploy_pi5_companion.sh) ---
+# fleet-uart-layout: ${FLEET_UART_LAYOUT_VERSION}
 # uart0-pi5 → ttyAMA0 (GPIO 14/15)   NMEA → PX4 (emulate_gps_to_px4)
+#            Header pin 8 = GPIO14 TXD0 (probe here), pin 10 = GPIO15 RXD0
 # uart2-pi5 → ttyAMA2 (GPIO 4/5)     GS comm radio
-# uart3-pi5 → ttyAMA3 (GPIO 8/9)     PX4 MAVLink
-# uart4-pi5 → ttyAMA4 (GPIO 12/13)   optional LC29H DA rover
+# uart3-pi5 → ttyAMA3 (GPIO 8/9)     PX4 MAVLink (mavlink-server)
+# uart4-pi5 → ttyAMA4 (GPIO 12/13)   optional LC29H DA rover (NOT PX4 NMEA)
 # USB       → ttyUSB0                LC29H EA rover (fleet default)
+# Do NOT use dtparam=uart0=on (conflicts with uart0-pi5). Do NOT enable ctsrts.
 [pi4]
 dtoverlay=uart3
 
@@ -791,17 +802,124 @@ dtoverlay=uart4-pi5
 
 [all]
 enable_uart=1
+# --- end CatSwarm Pi 5 fleet UARTs ---
 EOF
-    log "appended fleet UART block to ${cfg}"
-    NEED_UART_REBOOT=1
-  else
-    log "fleet UART block already present in ${cfg}"
+}
+
+# Idempotent: rewrite boot UART block whenever layout version / overlays are stale.
+# Soft Update must call this (via --phase=peripherals) — not only first New install.
+ensure_fleet_uart_boot_config() {
+  local cfg
+  cfg="$(boot_config_path)"
+  log "UART boot config: ${cfg}"
+
+  local need=0
+  if ! grep -q "fleet-uart-layout: ${FLEET_UART_LAYOUT_VERSION}" "${cfg}" 2>/dev/null; then
+    need=1
+    log "UART layout missing or outdated (want fleet-uart-layout: ${FLEET_UART_LAYOUT_VERSION})"
+  fi
+  if ! grep -q 'dtoverlay=uart0-pi5' "${cfg}" 2>/dev/null; then
+    need=1
+    log "UART overlay uart0-pi5 missing (required for NMEA→PX4 on GPIO14)"
+  fi
+  if ! grep -q 'dtoverlay=uart2-pi5' "${cfg}" 2>/dev/null \
+    || ! grep -q 'dtoverlay=uart3-pi5' "${cfg}" 2>/dev/null \
+    || ! grep -q 'dtoverlay=uart4-pi5' "${cfg}" 2>/dev/null; then
+    need=1
+    log "one or more fleet uart overlays missing"
+  fi
+  # Legacy / conflicting enable — forces wrong uart0 defaults on Pi 5.
+  if grep -qE '^dtparam=uart0=on' "${cfg}" 2>/dev/null; then
+    need=1
+    log "removing conflicting dtparam=uart0=on"
+  fi
+  if grep -qE 'uart0-pi5,ctsrts|dtoverlay=uart0-pi5,ctsrts' "${cfg}" 2>/dev/null; then
+    need=1
+    log "uart0-pi5 ctsrts must be off for GPS NMEA TX"
   fi
 
-  # Legacy mavlink-router on ttyS0 conflicts with fleet layout; disable if installed.
+  if [ "${need}" -eq 0 ]; then
+    log "fleet UART boot config up to date (layout ${FLEET_UART_LAYOUT_VERSION})"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  # Drop previous CatSwarm UART block (legacy end=enable_uart=1 or new end marker).
+  awk '
+    BEGIN { inblk=0 }
+    /# --- CatSwarm Pi 5 fleet UARTs/ { inblk=1; next }
+    inblk && /# --- end CatSwarm Pi 5 fleet UARTs ---/ { inblk=0; next }
+    inblk && /^enable_uart=1$/ { inblk=0; next }
+    inblk { next }
+    { print }
+  ' "${cfg}" > "${tmp}"
+  # Strip conflicting global uart0 enable left over from older images.
+  grep -vE '^dtparam=uart0=on[[:space:]]*$' "${tmp}" > "${tmp}.2"
+  mv "${tmp}.2" "${tmp}"
+  printf '\n' >> "${tmp}"
+  fleet_uart_boot_block >> "${tmp}"
+  cat "${tmp}" > "${cfg}"
+  rm -f "${tmp}"
+  log "wrote fleet UART boot config (layout ${FLEET_UART_LAYOUT_VERSION})"
+  NEED_UART_REBOOT=1
+}
+
+# Soft Update / New: boot overlays + companion-gps roles (minimal new-drone peripherals).
+phase_peripherals() {
+  progress_tick "peripherals (UART + companion-gps)"
+  log "=== phase: peripherals ==="
+
+  if ! id -nG "${DEPLOY_USER}" | tr ' ' '\n' | grep -qx dialout; then
+    usermod -aG dialout "${DEPLOY_USER}"
+    log "added ${DEPLOY_USER} to dialout"
+  fi
+
+  ensure_fleet_uart_boot_config
+
   if systemctl list-unit-files mavlink-router.service &>/dev/null; then
     systemctl disable --now mavlink-router.service 2>/dev/null || true
-    log "disabled mavlink-router.service (use mavlink-server on ttyAMA3)"
+    log "disabled mavlink-router.service"
+  fi
+
+  local ensure_ports="${RL_ROOT}/startup_scripts/util/ensure_companion_uart_ports.sh"
+  if [ -f "${ensure_ports}" ]; then
+    log "ensuring ~/.config/companion-gps (PX4 NMEA → /dev/ttyAMA0)…"
+    if run_as_user bash "${ensure_ports}"; then
+      log "companion-gps UART roles OK"
+    else
+      log "WARNING: ensure_companion_uart_ports.sh reported issues"
+    fi
+  else
+    log "NOTE: missing ${ensure_ports} (sync startup_scripts first)"
+  fi
+
+  # Live checks (warn only — overlays may need reboot before nodes appear).
+  local dev
+  for dev in /dev/ttyAMA0 /dev/ttyAMA2 /dev/ttyAMA3; do
+    if [ -e "${dev}" ]; then
+      log "OK ${dev}"
+    else
+      log "NOTE: ${dev} not present yet (reboot after UART overlay change)"
+    fi
+  done
+  if command -v pinctrl >/dev/null 2>&1; then
+    local pin14
+    pin14="$(pinctrl get 14 2>/dev/null || true)"
+    if printf '%s' "${pin14}" | grep -q 'TXD0'; then
+      log "OK GPIO14 = TXD0 (UART0 TX for NMEA→PX4) — probe header pin 8"
+    else
+      log "NOTE: GPIO14 not TXD0 yet (${pin14:-unavailable}) — reboot if overlays just changed"
+    fi
+  fi
+
+  local verify_tx="${RL_ROOT}/startup_scripts/util/verify_px4_nmea_uart_tx.sh"
+  if [ -f "${verify_tx}" ]; then
+    if run_as_user bash "${verify_tx}"; then
+      log "PX4 NMEA UART TX self-test OK"
+    else
+      log "WARNING: PX4 NMEA UART TX self-test failed (probe pin 8 / check wiring)"
+    fi
   fi
 }
 
@@ -1486,6 +1604,7 @@ main() {
       phase_verify
       ;;
     system) phase_system ;;
+    peripherals) phase_peripherals ;;
     repos) phase_repos ;;
     mavlink) phase_mavlink ;;
     companion) phase_companion ;;

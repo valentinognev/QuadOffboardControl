@@ -100,7 +100,7 @@ Starts tmux session **`catswarm_sim`** (default) with:
 
 | UART | Device | Role |
 |------|--------|------|
-| UART0 | `/dev/ttyAMA0` | NMEA out to PX4 (GPIO14 TX) via `emulate_gps_to_px4` |
+| UART0 | `/dev/ttyAMA0` | NMEA out to PX4 (**GPIO14 TX = header pin 8**) via `emulate_gps_to_px4`; verify with `util/verify_px4_nmea_uart_tx.sh` |
 | UART2 | `/dev/ttyAMA2` | Ground-station comm radio (GS 107-byte frames) |
 | UART3 | `/dev/ttyAMA3` | PX4 MAVLink telemetry (`mavlink-server`) |
 | UART4 | `/dev/ttyAMA4` | optional DA rover UART |

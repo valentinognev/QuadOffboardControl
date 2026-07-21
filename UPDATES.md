@@ -2,6 +2,15 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-21] Deploy: UART layout v3 + GPIO14 TX self-test
+- Strip conflicting `dtparam=uart0=on`; document probe **header pin 8 (GPIO14)**, not legacy UART4 pin 32.
+- `verify_px4_nmea_uart_tx.sh` samples GPIO14 during live NMEA / burst; hooked from `phase_peripherals`.
+
+## [2026-07-21] Deploy: idempotent peripherals phase (UART layout v2)
+- Soft Update skipped UART rewrite once the old marker existed → stale boot comments/roles.
+- `ensure_fleet_uart_boot_config` rewrites to `fleet-uart-layout: 2` (uart0=NMEA→PX4).
+- New `--phase=peripherals`; ObservationBoard Update always runs it + companion-gps ensure.
+
 ## [2026-07-20] Deploy: skip install when SystemManagerMain already in place
 - CMake writes `SystemManagerMain` to `~/RL/system_manager/`; `install` of same path failed. Now chown/chmod in place when built==dest.
 

@@ -31,7 +31,8 @@ All shell scripts support `-h`, `--help`, or `help`.
 | Phase | What it does |
 |-------|----------------|
 | `all` | system → repos → mavlink → python → build → verify |
-| `system` | apt packages (`COMPANION_APT_SYSTEM` + `COMPANION_APT_BUILD`, incl. **libeigen3-dev**), `dialout`, UART overlays |
+| `system` | apt packages + **idempotent** fleet UART boot rewrite (`fleet-uart-layout: 3`, uart0=NMEA→PX4; no `dtparam=uart0=on`) |
+| `peripherals` | dialout + UART boot rewrite + `ensure_companion_uart_ports` + `verify_px4_nmea_uart_tx` (OB Update always) |
 | `repos` | git clone/pull, `--from-dev` / `--push-to` rsync (incl. `startup_scripts`), or verify existing `~/RL/startup_scripts` |
 | `mavlink` | mavlink-server binary, config template, systemd unit |
 | `python` | Miniconda + `RL` env (pyzmq, pyserial, pymavlink, matplotlib, torch, …) |
@@ -230,7 +231,7 @@ Canonical on the Pi: `~/RL/startup_scripts/`. On the dev PC: `~/RL/CatSwarm/gene
 ~/RL/startup_scripts/start_companion_drone_tmux.sh --kill
 ```
 
-**Pi 5 UART layout:** UART0 `/dev/ttyAMA0` (NMEA→PX4, GPIO14 TX), UART2 `/dev/ttyAMA2` (GS radio), UART3 `/dev/ttyAMA3` (PX4 MAVLink), UART4 `/dev/ttyAMA4` (optional DA), USB `/dev/ttyUSB0` (EA rover).
+**Pi 5 UART layout:** UART0 `/dev/ttyAMA0` (NMEA→PX4, **GPIO14 TX = header pin 8**; legacy was UART4/pin 32), UART2 `/dev/ttyAMA2` (GS radio), UART3 `/dev/ttyAMA3` (PX4 MAVLink), UART4 `/dev/ttyAMA4` (optional DA), USB `/dev/ttyUSB0` (EA rover). Soft Update `--phase=peripherals` rewrites to `fleet-uart-layout: 3` and runs GPIO14 TX self-test.
 
 ---
 
