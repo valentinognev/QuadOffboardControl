@@ -6,7 +6,7 @@ This project provides the general infrastructure for multi-drone Reinforcement L
 
 The system follows a modular architecture:
 
-1.  **Simulation Environment**: Docker images for PX4 SITL — Noetic/Focal (`px4-noetic-sim-ros`, Gazebo Classic) and Noble/24.04 (`px4-noble-sim-ros`, Gazebo Jetty + FlightGear 2024 AppImage). Prefer `./runSimNoble.sh` for the Ubuntu 24 stack.
+1.  **Simulation Environment**: Docker images for PX4 SITL — Noetic/Focal (`px4-noetic-sim-ros`, Gazebo Classic) and Noble/24.04 (`px4-noble-sim-ros`, Gazebo Jetty + FlightGear 2024). Prefer `./runSimNoble.sh` for Gazebo Jetty; FlightGear Rascal via `./fixedwing/runSimFlightGearRascal.sh` (injectable `fixedwing/fg_spawn.env`) or `make px4_sitl_nolockstep flightgear_rascal` inside the Noble image (see `Dockerfiles/README.md`). Nested sim images live in `Dockerfiles/` (`PX4dockerfiles`).
 2.  **Communication Bridge**:
     - **MAVLink (UDP)**: Connects the PX4 SITL instances to the bridge.
     - **Bridges (C++)**: `mavlink_to_ZMQ` and `zmq_commands_mavlink` convert MAVLink messages to/from ZeroMQ.
@@ -18,6 +18,8 @@ The system follows a modular architecture:
 ## Key Files
 
 ### Simulation & Setup
+- **`fixedwing/runSimFlightGearRascal.sh`**: Noble + FlightGear Rascal plane. Mounts `fixedwing/fg_spawn.env` (`FG_ARGS_EX`) for in-air spawn (default 500 m / ~30 m/s) without rebuilding the image.
+- **`fixedwing/run_straight_flight.py`**: Starts the Rascal sim (unless `--no-sim`), arms if needed, switches OFFBOARD, streams body-forward velocity setpoints for straight flight.
 - **`runSimNoeticMulti.sh`**: The main entry point. Starts the Dockerized PX4/ROS simulation environment for multiple drones. It handles container management, X11 forwarding, and cleaning up processes.
 - **`multidrone/run_multidrone_bridges.sh`**: Sets up the communication layer. It creates a tmux session with pairs of bridge processes (`mavlink_to_ZMQ` and `zmq_commands_mavlink`) for each drone defined in the positions file.
 - **`multidrone/positions.txt`**: Configuration file defining the initial spawn positions (x, y, z, yaw) for the drones.

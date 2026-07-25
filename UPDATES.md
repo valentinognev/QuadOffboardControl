@@ -2,6 +2,27 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-25] Fix Noble image FG prebuild (no sitl launch)
+- Root cause: `make … flightgear_rascal` always runs `sitl_run.sh`/`fgfs`; `DONT_RUN=1` does not skip FG path.
+- Dockerfile now builds `flightgear_bridge` via ninja only; Rascal launch remains runtime (`fixedwing/runSimFlightGearRascal.sh`).
+
+## [2026-07-25] Fixed-wing FlightGear Rascal host helpers
+- Noble image: pre-build nolockstep + `flightgear_bridge` (not the launch target).
+- `fixedwing/fg_spawn.env` + `runSimFlightGearRascal.sh`: injectable in-air spawn (500 m, ~30 m/s).
+- `fixedwing/run_straight_flight.py`: start sim + OFFBOARD body-forward velocity hold.
+
+## [2026-07-25] Drop --disable-rembrandt for FG 2024
+- FG 2024 rejects `disable-rembrandt` (GUI dialog + usage dump); removed via `Dockerfiles/patch_px4_flightgear_sitl.sh`.
+- `Dockerfiles/` now has its own `UPDATES.md`; README documents Rascal SITL + FG 2024 pitfalls (MAVLink race, rembrandt, fgfs/dbus libs).
+
+## [2026-07-25] PX4 FG SITL patches (Rascal + FG 2024)
+- `patch_px4_flightgear_sitl.sh`: add omitted `1039_flightgear_rascal` to airframes CMakeLists; patch `FG_run.py` (disable TerraSync, drop duplicate `model-hz`, dedupe CLI for FG 2024, keep both `--generic`).
+- Wired into `PX4NobleSimNvidia.dockerfile` after PX4 v1.17.0 checkout.
+
+## [2026-07-25] Fix fgfs wrapper for SITL + FlightGear
+- `fgfs` no longer exports AppImage `LD_LIBRARY_PATH` into `dbus-run-session` (broke `fgfs --version` / `FG_run.py`).
+- Documented `make px4_sitl_nolockstep flightgear_rascal` flow: build `px4` before bridge if MAVLink NOTFOUND; set `FG_ARGS_EX=--disable-terrasync ...`.
+
 ## [2026-07-25] Dockerfiles README: Noble / FlightGear usage
 - Replaced stale VS Code-only `Dockerfiles/README.md` with Noble/Noetic image table, build/run scripts, and FlightGear start notes (`--disable-terrasync`, dbus).
 
