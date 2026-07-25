@@ -2,6 +2,14 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-25] Dockerfiles README: Noble / FlightGear usage
+- Replaced stale VS Code-only `Dockerfiles/README.md` with Noble/Noetic image table, build/run scripts, and FlightGear start notes (`--disable-terrasync`, dbus).
+
+## [2026-07-25] PX4 sim image: Ubuntu 24.04 (Noble) + Gazebo Jetty + FlightGear 2024
+- Renamed Jammy sim Docker assets to Noble: `PX4NobleSimNvidia.dockerfile`, `PX4_noble_sim_*.sh`, `runSimNoble.sh`, image tag `px4-noble-sim-ros`.
+- Base `nvidia/cuda:13.1.2-base-ubuntu24.04`; Gazebo `gz-jetty`; PX4 Autopilot `v1.17.0`; OpenJDK 17; pip PEP 668 via `PIP_BREAK_SYSTEM_PACKAGES`.
+- Install FlightGear 2024.1.6 AppImage **plus** `FlightGear-2024.1.6-data.txz` under `/opt/flightgear`; `/usr/local/bin/fgfs` sets `FG_ROOT`/`XDG_*`; build+runtime smoke starts UFO@KSFO under `dbus-run-session`+`xvfb` (verified).
+
 ## [2026-07-21] Deploy: UART layout v3 + GPIO14 TX self-test
 - Strip conflicting `dtparam=uart0=on`; document probe **header pin 8 (GPIO14)**, not legacy UART4 pin 32.
 - `verify_px4_nmea_uart_tx.sh` samples GPIO14 during live NMEA / burst; hooked from `phase_peripherals`.

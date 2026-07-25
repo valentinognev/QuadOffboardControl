@@ -6,7 +6,7 @@ This project provides the general infrastructure for multi-drone Reinforcement L
 
 The system follows a modular architecture:
 
-1.  **Simulation Environment**: A Docker container (`px4-noetic-sim-ros`) running Gazebo Classic and PX4 SITL.
+1.  **Simulation Environment**: Docker images for PX4 SITL — Noetic/Focal (`px4-noetic-sim-ros`, Gazebo Classic) and Noble/24.04 (`px4-noble-sim-ros`, Gazebo Jetty + FlightGear 2024 AppImage). Prefer `./runSimNoble.sh` for the Ubuntu 24 stack.
 2.  **Communication Bridge**:
     - **MAVLink (UDP)**: Connects the PX4 SITL instances to the bridge.
     - **Bridges (C++)**: `mavlink_to_ZMQ` and `zmq_commands_mavlink` convert MAVLink messages to/from ZeroMQ.
