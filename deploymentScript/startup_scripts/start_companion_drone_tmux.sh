@@ -178,12 +178,26 @@ EOF
 }
 
 start_gps_combo() {
-    companion_gps_start_in_tmux "${TMUX_SESSION}" "${COMPANION_RTK_ZMQ_URL}" "${COMPANION_PYTHON:-${PYTHON}}" "${CATSWARM_ROOT}"
+    companion_gps_apply_module
+    local rover="${COMPANION_ROVER_PORT:-}"
+    if [[ -z "${rover}" || ! -c "${rover}" ]]; then
+        echo "WARNING: rover port ${rover:-<unset>} not found — skipping GPS window." >&2
+        echo "  HA/SM stay up. Plug the module, then: ~/RL/startup_scripts/switch_EAUSB_DAUART.sh" >&2
+        COMPANION_GPS_WINDOW=""
+        return 0
+    fi
+    if ! companion_gps_start_in_tmux "${TMUX_SESSION}" "${COMPANION_RTK_ZMQ_URL}" "${COMPANION_PYTHON:-${PYTHON}}" "${CATSWARM_ROOT}"; then
+        echo "WARNING: GPS stack failed to start — continuing with HA/SM only." >&2
+        COMPANION_GPS_WINDOW=""
+        return 0
+    fi
     sleep 1
     if ! tmux list-windows -t "${TMUX_SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${COMPANION_GPS_WINDOW}"; then
-        echo "Error: tmux window ${TMUX_SESSION}:${COMPANION_GPS_WINDOW} not found after GPS start." >&2
-        return 1
+        echo "WARNING: tmux window ${TMUX_SESSION}:${COMPANION_GPS_WINDOW} missing after GPS start — continuing." >&2
+        COMPANION_GPS_WINDOW=""
+        return 0
     fi
+    return 0
 }
 
 is_raspberry_pi_5() {
@@ -461,4 +475,8 @@ start_gps_combo
 echo ""
 echo "Done."
 echo "  Attach: tmux attach -t ${TMUX_SESSION}"
-echo "  Windows: ${HW_WINDOW}, ${COMPANION_GPS_WINDOW} (GPS: $(companion_gps_module_label); RTK: $(companion_rtk_mode_label))"
+if [[ -n "${COMPANION_GPS_WINDOW:-}" ]]; then
+    echo "  Windows: ${HW_WINDOW}, ${COMPANION_GPS_WINDOW} (GPS: $(companion_gps_module_label); RTK: $(companion_rtk_mode_label))"
+else
+    echo "  Windows: ${HW_WINDOW} (GPS skipped — rover tty missing or GPS start failed; RTK: $(companion_rtk_mode_label))"
+fi
