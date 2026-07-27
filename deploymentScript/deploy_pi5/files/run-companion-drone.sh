@@ -91,6 +91,7 @@ if tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
 fi
 
 _boot_gps_module() {
+    # Prints: f9p | ea | da  (never collapse f9p→ea — that made boot wait on USB0 for 30s)
     local module="${COMPANION_GPS_MODULE:-}"
     if [[ -f "${GPS_STATE_FILE}" ]]; then
         # shellcheck disable=SC1090
@@ -99,6 +100,7 @@ _boot_gps_module() {
     module="$(printf '%s' "${module:-ea}" | tr '[:upper:]' '[:lower:]')"
     case "${module}" in
         da|uart|serial|d) printf 'da\n' ;;
+        f9p|zed-f9p|ublox) printf 'f9p\n' ;;
         *) printf 'ea\n' ;;
     esac
 }
@@ -118,19 +120,63 @@ wait_for_device() {
     return 0
 }
 
+wait_for_any_device() {
+    # Wait until any of the listed devices appear (or timeout). Args: wait_s dev [dev...]
+    local wait_s="$1"
+    shift
+    local elapsed=0
+    local d
+    while [ "${elapsed}" -lt "${wait_s}" ]; do
+        for d in "$@"; do
+            if [ -e "${d}" ]; then
+                echo "companion-drone: found ${d} after ${elapsed}s" >&2
+                return 0
+            fi
+        done
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    echo "companion-drone: warning: none of [$*] present after ${wait_s}s (GPS sniff may still recover)" >&2
+    return 1
+}
+
 wait_for_uarts() {
+    # Required fleet UARTs only — do not block boot on optional AMA4 (DA).
+    local uart_brief="${COMPANION_UART_BRIEF_WAIT_S:-8}"
     local dev
-    for dev in /dev/ttyAMA0 /dev/ttyAMA2 /dev/ttyAMA3 /dev/ttyAMA4; do
-        wait_for_device "${dev}" "${UART_WAIT_S}" || true
+    for dev in /dev/ttyAMA0 /dev/ttyAMA2 /dev/ttyAMA3; do
+        wait_for_device "${dev}" "${uart_brief}" || true
     done
 }
 
+# Brief USB wait only — never stall ~30s on the wrong tty before tmux exists.
+# start_companion_drone_tmux.sh still sniffs/persists if the device appears later.
+USB_BRIEF_WAIT_S="${COMPANION_USB_BRIEF_WAIT_S:-10}"
 BOOT_GPS_MODULE="$(_boot_gps_module)"
-BOOT_ROVER_PORT="${ROVER_PORT:-/dev/ttyUSB0}"
-echo "companion-drone: boot GPS module=${BOOT_GPS_MODULE} (from ${GPS_STATE_FILE})" >&2
-if [[ "${BOOT_GPS_MODULE}" == "ea" ]]; then
-    wait_for_device "${BOOT_ROVER_PORT}" "${USB_WAIT_S}" || true
-fi
+BOOT_ROVER_PORT="${ROVER_PORT:-}"
+echo "companion-drone: boot GPS module=${BOOT_GPS_MODULE} port=${BOOT_ROVER_PORT:-<default>} (from ${GPS_STATE_FILE})" >&2
+case "${BOOT_GPS_MODULE}" in
+    f9p)
+        if [[ -n "${BOOT_ROVER_PORT}" && "${BOOT_ROVER_PORT}" == /dev/ttyACM* ]]; then
+            wait_for_device "${BOOT_ROVER_PORT}" "${USB_BRIEF_WAIT_S}" || true
+        else
+            # Expand glob safely: no match → literal stays, wait_for_any handles missing.
+            shopt -s nullglob
+            _acm=(/dev/ttyACM*)
+            shopt -u nullglob
+            if [[ "${#_acm[@]}" -gt 0 ]]; then
+                wait_for_any_device "${USB_BRIEF_WAIT_S}" "${_acm[@]}" || true
+            else
+                wait_for_any_device "${USB_BRIEF_WAIT_S}" /dev/ttyACM0 || true
+            fi
+        fi
+        ;;
+    ea)
+        wait_for_device "${BOOT_ROVER_PORT:-/dev/ttyUSB0}" "${USB_BRIEF_WAIT_S}" || true
+        ;;
+    da)
+        ;; # UART rover; covered by wait_for_uarts / AMA4 optional
+esac
 
 wait_for_uarts
 # Migrate legacy COMPANION_PX4_GPS_PORT=ttyAMA4 → ttyAMA0 and validate nodes.

@@ -163,11 +163,17 @@ print_topology() {
     else
         rtk_line="WiFi/LAN — rover_zmq → ${COMPANION_RTK_ZMQ_URL:-tcp://${COMPANION_BASE_HOST}:${COMPANION_BASE_PORT_NUM}}"
     fi
-    if [[ "${COMPANION_GPS_MODULE:-ea}" == "da" ]]; then
-        gps_line="DA UART1 ${ROVER_PORT_UART} (${COMPANION_GPS_WINDOW:-gps_rtk}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
-    else
-        gps_line="EA USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_ea}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
-    fi
+    case "${COMPANION_GPS_MODULE:-ea}" in
+        da)
+            gps_line="DA UART ${ROVER_PORT_UART} (${COMPANION_GPS_WINDOW:-gps_rtk}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+            ;;
+        f9p)
+            gps_line="F9P USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_f9p}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+            ;;
+        *)
+            gps_line="EA/LC29H USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_ea}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+            ;;
+    esac
     cat <<EOF
 Companion topology (Raspberry Pi 5):
   GPS rover — ${gps_line}
@@ -179,6 +185,13 @@ EOF
 
 start_gps_combo() {
     companion_gps_apply_module
+    if ! companion_gps_boot_resolve_available; then
+        echo "WARNING: no available GPS rover — skipping GPS window." >&2
+        echo "  HA/SM stay up. Plug a module, then: ~/RL/startup_scripts/switch_EAUSB_DAUART.sh --ea|--da|--f9p" >&2
+        echo "  Or: ~/RL/startup_scripts/util/flush_companion_gps_from_hw.sh" >&2
+        COMPANION_GPS_WINDOW=""
+        return 0
+    fi
     local rover="${COMPANION_ROVER_PORT:-}"
     if [[ -z "${rover}" || ! -c "${rover}" ]]; then
         echo "WARNING: rover port ${rover:-<unset>} not found — skipping GPS window." >&2
@@ -242,6 +255,7 @@ while [ $# -gt 0 ]; do
         --serial|--rf) COMPANION_RTK_MODE=serial; _RTK_MODE_EXPLICIT=1; shift ;;
         --ea|--gps-ea) COMPANION_GPS_MODULE=ea; _GPS_MODULE_EXPLICIT=1; shift ;;
         --da|--gps-da) COMPANION_GPS_MODULE=da; _GPS_MODULE_EXPLICIT=1; shift ;;
+        --f9p|--gps-f9p) COMPANION_GPS_MODULE=f9p; _GPS_MODULE_EXPLICIT=1; shift ;;
         --gps-module=*) COMPANION_GPS_MODULE="${1#--gps-module=}"; _GPS_MODULE_EXPLICIT=1; shift ;;
         -*)
             echo "Unknown option: $1" >&2
@@ -394,6 +408,10 @@ HW_CMD=( "${HW_SCRIPT}"
     # its own offset port. Without this override, mavlink_to_ZMQ listens on the
     # wrong port and never receives MAVLink data (GPS/flight data silently stay at 0).
     "--mavlink-udp=${COMPANION_MAVLINK_UDP_PORT:-14540}"
+    # mavlink-server bridges UART↔UDP14540 (telemetry) and udpserver 14580 (commands).
+    # Desktop multi defaults (14280+i / target=i+1) never reach the FC on a fleet Pi.
+    "--mavlink-cmd=${COMPANION_MAVLINK_CMD:-udpout:127.0.0.1:14580}"
+    "--mavlink-target-system=${COMPANION_MAVLINK_TARGET_SYSTEM:-1}"
 )
 if [ -n "${SERIAL_DEVICE}" ]; then
     HW_CMD+=( "--serialcomm=${SERIAL_DEVICE}" )

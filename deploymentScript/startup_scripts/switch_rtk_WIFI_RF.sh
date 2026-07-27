@@ -86,14 +86,36 @@ if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
   exit 1
 fi
 
-Z2C_CMD="${PYTHON} ${CATSWARM_ROOT}/hardware_adapter/python/ZMQ_to_comm.py"
-Z2C_CMD+=" --zmq-flight-data-port=7798 --zmq-comm-pub-port=7803"
-Z2C_CMD+=" --drone-id=${DRONE_ID} --zmq-mavlink-fallback-port=9903"
-Z2C_CMD+=" --zmq-comm-neighbour-sub-port=7799"
-Z2C_CMD+=" --serialcomm=${UART2} --no-serial-comm-tx"
-if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
-  Z2C_CMD+=" --rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}"
-  Z2C_CMD+=" --rtk-zmq-sndhwm=${RTK_ZMQ_SNDHWM} --rtk-zmq-coalesce-ms=${RTK_ZMQ_COALESCE_MS}"
+Z2C_BIN="${CATSWARM_ROOT}/hardware_adapter/bin/ZMQ_to_comm_c"
+Z2C_PY="${CATSWARM_ROOT}/hardware_adapter/python/ZMQ_to_comm.py"
+# Fleet C binary uses MultiInput-style ports (base + drone_id); Python path below is legacy.
+FD_PORT=$((21700 + DRONE_ID))
+COMM_PUB_PORT=$((7800 + DRONE_ID))
+NEIGH_SUB_PORT=$((22700 + DRONE_ID))
+MAV_FB_PORT=$((9900 + DRONE_ID))
+if [[ -x "${Z2C_BIN}" ]]; then
+  Z2C_CMD="${Z2C_BIN}"
+  Z2C_CMD+=" --zmq-flight-data-port=${FD_PORT} --zmq-comm-pub-port=${COMM_PUB_PORT}"
+  Z2C_CMD+=" --drone-id=${DRONE_ID} --zmq-mavlink-fallback-port=${MAV_FB_PORT}"
+  Z2C_CMD+=" --zmq-comm-neighbour-sub-port=${NEIGH_SUB_PORT}"
+  Z2C_CMD+=" --zmq-sys-manager-out-port=${FD_PORT}"
+  Z2C_CMD+=" --serialcomm=${UART2} --zmq-gs-forward-port=7799"
+  if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
+    Z2C_CMD+=" --rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND} --serial-comm-tx"
+  else
+    Z2C_CMD+=" --serial-comm-tx"
+  fi
+  _Z2C_LAUNCH_CD="${CATSWARM_ROOT}/hardware_adapter"
+else
+  Z2C_CMD="${PYTHON} ${Z2C_PY}"
+  Z2C_CMD+=" --zmq-flight-data-port=${FD_PORT} --zmq-comm-pub-port=${COMM_PUB_PORT}"
+  Z2C_CMD+=" --drone-id=${DRONE_ID} --zmq-mavlink-fallback-port=${MAV_FB_PORT}"
+  Z2C_CMD+=" --zmq-comm-neighbour-sub-port=${NEIGH_SUB_PORT}"
+  Z2C_CMD+=" --serialcomm=${UART2} --serial-comm-tx"
+  if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
+    Z2C_CMD+=" --rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}"
+  fi
+  _Z2C_LAUNCH_CD="${CATSWARM_ROOT}/hardware_adapter/python"
 fi
 
 _send() {
@@ -101,7 +123,7 @@ _send() {
   local inner_cmd="$2"
   tmux send-keys -t "${target}" C-c
   sleep 1.5
-  local launch="cd ${CATSWARM_ROOT}/hardware_adapter/python && export PYTHONPATH=${CATSWARM_ROOT}/system_manager/system_managerPY:\$PYTHONPATH && ${inner_cmd}"
+  local launch="cd ${_Z2C_LAUNCH_CD} && export PYTHONPATH=${CATSWARM_ROOT}/system_manager/system_managerPY:\$PYTHONPATH && ${inner_cmd}"
   if [[ -n "${COMPANION_RUN_IN_RL:-}" ]] && [[ -x "${COMPANION_RUN_IN_RL}" ]]; then
     launch="${COMPANION_RUN_IN_RL} $(printf '%q' "${launch}")"
   fi
@@ -112,7 +134,7 @@ echo "switch_rtk_WIFI_RF.sh: RTK=$(companion_rtk_mode_label) GPS=$(companion_gps
 echo "switch_rtk_WIFI_RF.sh: restarting ${SESSION}:${HW_WIN}.3 (ZMQ_to_comm)…" >&2
 _send "${SESSION}:${HW_WIN}.3" "${Z2C_CMD}"
 
-for old_win in gps_ea gps_rtk; do
+for old_win in gps_ea gps_rtk gps_f9p; do
   if [[ "${old_win}" != "${COMPANION_GPS_WINDOW}" ]] \
       && tmux list-windows -t "${SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${old_win}"; then
     tmux kill-window -t "${SESSION}:${old_win}" 2>/dev/null || true

@@ -2,6 +2,37 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-07-27] F9P→PX4: 1 Hz meas rate for flight
+- Fleet profile `f9p` uses `DA_RATE_MS=1000` (was 100 / 10 Hz) to avoid high-rate noise in flight.
+- PX4 stay-alive still via emulate GGA heartbeat (~450 ms).
+
+## [2026-07-27] Boot: recognize F9P — stop 30s USB0 wait before tmux
+- `run-companion-drone.sh` mapped f9p→ea and waited on `/dev/ttyUSB0` (up to 30s) before
+  creating `catswarm_sim` — looked like “tmux never started” with only F9P plugged.
+- Wait ACM for f9p (brief 10s); required UARTs only (skip blocking on optional AMA4).
+- `companion_gps_ensure_ports` migrate no longer defaults module to ea over a saved F9P.
+
+## [2026-07-27] A/B: FC reboot fixed GPS; F9P+LC29H both OK on AMA0
+- GPS_1_CONFIG debug sweeps wedged FC GPS until soft reboot (wire was fine).
+- Both modules plugged: EA then F9P each produce GPS_RAW fix_type=3 → FLIG gps≠0.
+
+## [2026-07-27] F9P→PX4: synth RMC + 10 Hz; `--f9p` port flush
+- F9P often lacks steady RMC (PX4 needs GGA+RMC); `emulate_gps_to_px4` synthesizes RMC from GGA.
+- F9P CFG: GSV off + RMC all interfaces; fleet F9P rate 10 Hz; `switch --f9p` flushes ACM0@115200.
+- If FC still has no GPS_RAW while GPIO14 TX passes: check physical Pi header pin 8 → FC GPS1 RX.
+
+## [2026-07-27] F9P→PX4: 10 Hz + GGA/RMC-only NMEA bridge
+- Root cause: F9P at 1 Hz with GSA/GSV flooded AMA0; PX4 never set GPS-present / GPS_RAW.
+- `rover_zmq` forwards only GGA/RMC on `--nmea-zmq-bind`; F9P fleet default `DA_RATE_MS=100`.
+- `switch_EAUSB_DAUART.sh --f9p` flushes ACM0@115200 (was saving EA USB0 defaults).
+
+## [2026-07-27] Companion GPS boot: prefer saved, else sniff+persist
+- `companion_gps_boot_resolve_available`: if saved rover tty missing, sniff F9P→EA→DA→UART,
+  flush `~/.config/companion-gps`, then start that profile (no more silent GPS skip when USB0
+  LC29H is present but saved F9P ACM is not).
+- `start_companion_drone_tmux.sh` `start_gps_combo` uses the resolver; adds `--f9p`; topology
+  labels F9P vs EA correctly.
+
 ## [2026-07-25] Fix Noble image FG prebuild (no sitl launch)
 - Root cause: `make … flightgear_rascal` always runs `sitl_run.sh`/`fgfs`; `DONT_RUN=1` does not skip FG path.
 - Dockerfile now builds `flightgear_bridge` via ninja only; Rascal launch remains runtime (`fixedwing/runSimFlightGearRascal.sh`).

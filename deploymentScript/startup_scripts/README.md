@@ -18,8 +18,10 @@ Scripts in this folder start the **CatSwarm companion stack** on a **Raspberry P
 | File | Purpose |
 |------|---------|
 | **`gnss_serial_args.sh`** | Unified `BASE_*` / `ROVER_*` env + CLI parsing |
-| **`companion_gps_module.sh`** | EA USB vs DA UART rover selection + tmux GPS launcher |
+| **`companion_gps_module.sh`** | EA / DA / F9P rover selection + tmux GPS launcher; boot prefers saved port, else sniff+persist |
 | **`companion_rtk_connection.sh`** | WiFi/LAN vs serial RF RTK path selection |
+| **`sniff_companion_gps_profile.py`** | Probe F9P ACM then LC29H EA/DA (used by flush + boot fallback) |
+| **`flush_companion_gps_from_hw.sh`** | Sniff hardware and rewrite `~/.config/companion-gps` |
 
 ## Unified serial parameters (`util/gnss_serial_args.sh`)
 
@@ -104,7 +106,10 @@ Starts tmux session **`catswarm_sim`** (default) with:
 | UART2 | `/dev/ttyAMA2` | Ground-station comm radio (GS 107-byte frames) |
 | UART3 | `/dev/ttyAMA3` | PX4 MAVLink telemetry (`mavlink-server`) |
 | UART4 | `/dev/ttyAMA4` | optional DA rover UART |
-| USB | `/dev/ttyUSB0` | LC29H EA rover (fleet default) |
+| USB | `/dev/ttyUSB0` | LC29H EA rover (fleet default @ **460800 / 10 Hz**) |
+| USB ACM | `/dev/ttyACM0` | u-blox ZED-F9P rover (`switch … --f9p`, **115200 / 1 Hz**) |
+
+Boot: prefer saved `~/.config/companion-gps` if its rover tty exists; else sniff F9P→EA→DA→UART and persist. `run-companion-drone.sh` waits briefly for the correct USB/ACM device (F9P is not treated as EA).
 
 **RTK path (RF, no Wi‑Fi to GS for corrections):**
 
