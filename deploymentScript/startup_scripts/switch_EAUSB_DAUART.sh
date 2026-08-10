@@ -34,7 +34,7 @@ or switch module and save the new preference.
 Options:
   --ea, --gps-ea          Use EA on USB (/dev/ttyUSB0) and save
   --da, --gps-da          Use DA on UART (/dev/ttyAMA4) + PX4 NMEA and save
-  --f9p, --gps-f9p        Use u-blox ZED-F9P on USB (/dev/ttyACM0) and save
+  --f9p, --gps-f9p        Use u-blox ZED-F9P (ACM@115200 or ttyUSB*@230400, ROVER_WIRE=ubx) and save
   --gps-module=ea|da|f9p  Same as --ea / --da / --f9p
   --wifi                  RTK via WiFi/LAN (also restarts with saved RTK host)
   --serial, --rf          RTK via serial RF bridge
@@ -88,8 +88,17 @@ done
 if [[ "${_GPS_MODULE_EXPLICIT}" -eq 1 ]]; then
   # Always flush fleet port/baud for the chosen module (do not keep EA USB0 defaults
   # when switching to F9P — resolve_module save alone left ROVER_PORT=/dev/ttyUSB0).
+  # Prefer present ttyUSB F9P when no ACM is plugged (15B UART path).
   case "$(printf '%s' "${COMPANION_GPS_MODULE}" | tr '[:upper:]' '[:lower:]')" in
-    f9p|zed-f9p|ublox) companion_gps_write_fleet_profile f9p ;;
+    f9p|zed-f9p|ublox)
+      if [[ -n "${ROVER_PORT:-}" && ( "${ROVER_PORT}" == /dev/ttyUSB* || "${ROVER_PORT}" == /dev/ttyACM* ) ]]; then
+        companion_gps_write_fleet_profile f9p "${ROVER_PORT}"
+      elif [[ -c /dev/ttyUSB0 && ! -e /dev/ttyACM0 ]]; then
+        companion_gps_write_fleet_profile f9p /dev/ttyUSB0
+      else
+        companion_gps_write_fleet_profile f9p
+      fi
+      ;;
     da|uart|serial|d) companion_gps_write_fleet_profile da-uart ;;
     ea|usb|e|*) companion_gps_write_fleet_profile ea ;;
   esac

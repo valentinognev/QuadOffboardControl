@@ -19,11 +19,13 @@ SERVICE_NAME="mavlink-server"
 FLEET_PRESET=0
 NO_RESTART=0
 
-# Pi 5 companion defaults (PX4 on UART3, bridges on UDP 14540, QGC on TCP 5760)
+# Pi 5 companion defaults (PX4 on UART3, bridges on UDP 14540, QGC on TCP 5760,
+# companion inject udp_server on 14580)
 DEFAULT_SERIAL_DEVICE="/dev/ttyAMA3"
 DEFAULT_SERIAL_BAUD="921600"
 DEFAULT_UDP_CLIENT="127.0.0.1:14540"
 DEFAULT_TCP_SERVER="0.0.0.0:5760"
+DEFAULT_UDP_SERVER_PORT="14580"
 DEFAULT_WEB_SERVER="0.0.0.0:8080"
 DEFAULT_MAVLINK_SYSTEM_ID="1"
 DEFAULT_MAVLINK_COMPONENT_ID="191"
@@ -47,6 +49,7 @@ Fleet defaults (--fleet-preset):
   Serial:     ${DEFAULT_SERIAL_DEVICE} @ ${DEFAULT_SERIAL_BAUD}
   UDP client: ${DEFAULT_UDP_CLIENT}  (hardware_adapter bridges)
   TCP server: ${DEFAULT_TCP_SERVER}  (QGroundControl)
+  UDP server: 0.0.0.0:${DEFAULT_UDP_SERVER_PORT}  (companion inject / RTCM→MAVLink)
   Web UI:     ${DEFAULT_WEB_SERVER}
 
 Config file: ${CONFIG_FILE}
@@ -140,6 +143,14 @@ port = ${udp_port}
 [[tcp_server]]
 address = "${tcp_addr}"
 port = ${tcp_port}
+
+# Companion injects (e.g. GPS_INJECT_DATA / RTCM→MAVLink) listen here.
+[[udp_server]]
+port = ${UDP_SERVER_PORT}
+
+# Optional alternate inject port (not enabled by default):
+# [[udp_server]]
+# port = 14581
 EOF
   chmod 0644 "${CONFIG_FILE}"
   log "wrote ${CONFIG_FILE}"
@@ -174,6 +185,7 @@ main() {
   SERIAL_BAUD="${DEFAULT_SERIAL_BAUD}"
   UDP_CLIENT="${DEFAULT_UDP_CLIENT}"
   TCP_SERVER="${DEFAULT_TCP_SERVER}"
+  UDP_SERVER_PORT="${DEFAULT_UDP_SERVER_PORT}"
 
   load_existing
 
@@ -185,6 +197,7 @@ main() {
   SERIAL_BAUD="${SERIAL_BAUD:-${DEFAULT_SERIAL_BAUD}}"
   UDP_CLIENT="${UDP_CLIENT:-${DEFAULT_UDP_CLIENT}}"
   TCP_SERVER="${TCP_SERVER:-${DEFAULT_TCP_SERVER}}"
+  UDP_SERVER_PORT="${UDP_SERVER_PORT:-${DEFAULT_UDP_SERVER_PORT}}"
 
   echo ""
   log "=== mavlink-server configuration ==="
@@ -209,6 +222,7 @@ main() {
   echo "  serial:     ${SERIAL_DEVICE} @ ${SERIAL_BAUD}"
   echo "  udp_client: ${UDP_CLIENT}"
   echo "  tcp_server: ${TCP_SERVER}"
+  echo "  udp_server: port ${UDP_SERVER_PORT}"
   echo "  web_server: ${WEB_SERVER}"
   echo "  mavlink id: system=${MAVLINK_SYSTEM_ID} component=${MAVLINK_COMPONENT_ID}"
   echo ""

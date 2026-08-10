@@ -1,0 +1,35 @@
+#!/bin/sh
+# CatSwarm multi-iris: rangefinder + optical flow; GPS fusion ON at boot.
+# shellcheck disable=SC2154
+# GCS (Normal) + offboard/onboard (HA mavlink_to_ZMQ on 14540+i). Streams are
+# per mavlink instance — GCS-only left HA without DISTANCE_SENSOR until a
+# SET_MESSAGE_INTERVAL arrived on the offboard link.
+mavlink stream -r 20 -s DISTANCE_SENSOR -u $udp_gcs_port_local
+mavlink stream -r 50 -s OPTICAL_FLOW_RAD -u $udp_gcs_port_local
+mavlink stream -r 20 -s DISTANCE_SENSOR -u $udp_offboard_port_local
+mavlink stream -r 50 -s OPTICAL_FLOW_RAD -u $udp_offboard_port_local
+
+# GPS fusion ON explicitly: PX4 autosaves PARAM_SET, so an ObservationBoard "NO FIX"
+# (EKF2_GPS_CTRL=0 / SYS_HAS_GPS=0) would otherwise survive a SITL restart. These must
+# stay identical to _GPS_ON in hardware_adapter/python/gps_quality_override.py.
+# SYS_HAS_GPS is reboot-required, so it only takes effect from the next boot — which is
+# exactly the case here (set during boot, before the estimator starts).
+param set EKF2_GPS_CTRL 7
+param set SYS_HAS_GPS 1
+
+# Optical flow: stream OPTICAL_FLOW_RAD for verification, but do NOT fuse with GPS
+# at boot. Gazebo mockup OF + GPS together corrupts EKF XY (metres of S5 wander);
+# PX4's own iris_opt_flow(_mockup) airframes set EKF2_GPS_CTRL 0 when OF is on.
+# OB GPS-quality NO FIX enables OF fusion via HA (gps_quality_override).
+# MINHGT 0.02 matches real air (~2 cm).
+param set EKF2_OF_CTRL 0
+param set SENS_FLOW_ROT 6
+param set SENS_FLOW_MINHGT 0.02
+param set SENS_FLOW_MAXHGT 15
+param set SENS_FLOW_MAXR 2.5
+
+# CatSwarm takeoff (PX4 v1.17+): pad false-air + HTE starves thrust.
+param set MPC_USE_HTE 0
+param set MPC_THR_HOVER 0.6
+param set COM_DISARM_LAND 0
+param set COM_DISARM_PRFLT 0

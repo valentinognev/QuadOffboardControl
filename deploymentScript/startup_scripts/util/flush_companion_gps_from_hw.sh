@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sniff rover GNSS on the Pi and flush ~/.config/companion-gps to matching fleet defaults.
-# Order: F9P (ttyACM*) → LC29H USB/UART. Sniff fail → warn + EA USB defaults (460800 / 10 Hz).
+# Order: F9P (ttyACM* @115200, then ttyUSB* @230400/115200) → LC29H USB/UART.
+# Sniff fail → warn + EA USB defaults (460800 / 10 Hz).
 #
 # Usage:
 #   flush_companion_gps_from_hw.sh [--no-restart]
@@ -65,7 +66,7 @@ if tmux has-session -t "${SESSION}" 2>/dev/null; then
 fi
 sleep 0.5
 
-echo "flush_companion_gps_from_hw: sniffing F9P ACM then ${USB_PORT} / ${UART_PORT}…" >&2
+echo "flush_companion_gps_from_hw: sniffing F9P ACM/USB then ${USB_PORT} / ${UART_PORT}…" >&2
 set +e
 TOKEN_LINE="$("${PYTHON}" "${SNIFF_PY}" --usb-port "${USB_PORT}" --uart-port "${UART_PORT}")"
 sniff_rc=$?

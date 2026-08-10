@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Sniff companion rover: F9P (ACM) then LC29H EA/DA.
+"""Sniff companion rover: F9P (ACM then USB) then LC29H EA/DA.
 
 Prints one token on stdout:
-  usb_f9p|/dev/ttyACMN | usb_ea | usb_da | uart_da | none
+  usb_f9p|/dev/ttyACMN | usb_f9p|/dev/ttyUSBN | usb_ea | usb_da | uart_da | none
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _probe_f9p(port: str, baud: int = 115200, timeout_s: float = 1.2) -> bool:
                     if cls == 0x0A and msg_id == 0x04:
                         return True
     except Exception as exc:
-        print(f"sniff_companion_gps_profile: F9P probe {port} failed: {exc}", file=sys.stderr)
+        print(f"sniff_companion_gps_profile: F9P probe {port}@{baud} failed: {exc}", file=sys.stderr)
         return False
     return False
 
@@ -145,12 +145,20 @@ def _query_verno(port: str, baud: int, listen_s: float = 0.7) -> str:
     return _profile_from_text(bytes(buf))
 
 
-def sniff_f9p(acm_glob: str = "/dev/ttyACM*") -> str | None:
-    ports = sorted(glob.glob(acm_glob))
-    for port in ports:
-        if _probe_f9p(port):
+def sniff_f9p(
+    acm_glob: str = "/dev/ttyACM*",
+    usb_glob: str = "/dev/ttyUSB*",
+) -> str | None:
+    """Probe ACM@115200 then USB@230400 (optional 115200). Prefer first hit."""
+    for port in sorted(glob.glob(acm_glob)):
+        if _probe_f9p(port, baud=115200):
             print(f"sniff_companion_gps_profile: {port}@115200 → F9P", file=sys.stderr)
             return port
+    for port in sorted(glob.glob(usb_glob)):
+        for baud in (230400, 115200):
+            if _probe_f9p(port, baud=baud):
+                print(f"sniff_companion_gps_profile: {port}@{baud} → F9P", file=sys.stderr)
+                return port
     return None
 
 
@@ -177,8 +185,13 @@ def sniff_lc29h(usb_port: str, uart_port: str) -> str:
     return "none"
 
 
-def sniff(usb_port: str, uart_port: str, acm_glob: str = "/dev/ttyACM*") -> str:
-    f9p_port = sniff_f9p(acm_glob)
+def sniff(
+    usb_port: str,
+    uart_port: str,
+    acm_glob: str = "/dev/ttyACM*",
+    usb_glob: str = "/dev/ttyUSB*",
+) -> str:
+    f9p_port = sniff_f9p(acm_glob, usb_glob)
     if f9p_port:
         return f"usb_f9p|{f9p_port}"
     return sniff_lc29h(usb_port, uart_port)
@@ -189,8 +202,9 @@ def main() -> int:
     p.add_argument("--usb-port", default="/dev/ttyUSB0")
     p.add_argument("--uart-port", default="/dev/ttyAMA4")
     p.add_argument("--acm-glob", default="/dev/ttyACM*")
+    p.add_argument("--usb-glob", default="/dev/ttyUSB*")
     args = p.parse_args()
-    token = sniff(args.usb_port, args.uart_port, args.acm_glob)
+    token = sniff(args.usb_port, args.uart_port, args.acm_glob, args.usb_glob)
     print(token)
     return 0
 

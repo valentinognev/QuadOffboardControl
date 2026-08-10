@@ -17,6 +17,7 @@
 #   RTK corrections (saved in ~/.config/companion-rtk; switch with switch_rtk_WIFI_RF.sh):
 #     WiFi  — rover_zmq ZMQ PULL tcp://<GS_IP>:5560  (GS: startRtkWiFiGS.sh)
 #     Serial — UART2 GS frames → ZMQ_to_comm → tcp://127.0.0.1:5562 → rover_zmq
+#     Sink (COMPANION_RTK_SINK): rover_uart (default) | mavlink_rtcm (rtcm_to_mavlink → FC)
 #
 # Usage:
 #   ./start_companion_drone_tmux.sh <drone_id> [CPP|PY|python]
@@ -119,6 +120,7 @@ COMPANION_RTK_ZMQ_BIND="${COMPANION_RTK_ZMQ_BIND:-tcp://127.0.0.1:5562}"
 COMPANION_BASE_HOST="${COMPANION_BASE_HOST:-192.168.0.43}"
 COMPANION_BASE_PORT_NUM="${COMPANION_BASE_PORT_NUM:-5560}"
 _RTK_MODE_EXPLICIT=0
+_RTK_SINK_EXPLICIT=0
 _GPS_MODULE_EXPLICIT=0
 
 UART1_GPS_DA="${COMPANION_UART1_GPS_DA:-/dev/ttyAMA4}"
@@ -146,44 +148,86 @@ Companion: tmux ${TMUX_SESSION} with hardware_adapter_<id> + GPS window (EA or D
 
   RTK uses last saved mode (~/.config/companion-rtk). Override once:
     --wifi | --serial | --rtk-mode=wifi|serial   --base-host=<GS IP>
+    --sink=mavlink_rtcm|rover_uart   (default rover_uart; mavlink skips rover_zmq)
 
   --kill                 Stop companion tmux session and comm/GPS processes
 
   WiFi:  rover_zmq → tcp://<GS>:5560  (GS: startRtkWiFiGS.sh)
   Serial: UART2 → ZMQ_to_comm → ${COMPANION_RTK_ZMQ_BIND}  (GS: startRtkCommGS.sh)
+  Sink mavlink_rtcm: startRtcmToMavlinkPI.sh (WiFi+RF → GPS_RTCM_DATA); forces RF bridge
 
 Paths: ${CATSWARM_ROOT}
 EOF
 }
 
 print_topology() {
-    local rtk_line gps_line
+    local rtk_line gps_line sink_line
     if [[ "${COMPANION_USE_RF_RTK_BRIDGE:-0}" -eq 1 ]]; then
-        rtk_line="Serial RF — UART2 → ${COMPANION_RTK_ZMQ_BIND} → rover_zmq"
+        rtk_line="RF bridge PUB ${COMPANION_RTK_ZMQ_BIND}"
+        if [[ "${COMPANION_RTK_MODE}" == "wifi" ]]; then
+            rtk_line="WiFi ${COMPANION_BASE_HOST}:${COMPANION_BASE_PORT_NUM} + ${rtk_line}"
+        else
+            rtk_line="Serial RF — UART2 → ${rtk_line}"
+        fi
     else
-        rtk_line="WiFi/LAN — rover_zmq → ${COMPANION_RTK_ZMQ_URL:-tcp://${COMPANION_BASE_HOST}:${COMPANION_BASE_PORT_NUM}}"
+        rtk_line="WiFi/LAN — ${COMPANION_RTK_ZMQ_URL:-tcp://${COMPANION_BASE_HOST}:${COMPANION_BASE_PORT_NUM}}"
     fi
-    case "${COMPANION_GPS_MODULE:-ea}" in
-        da)
-            gps_line="DA UART ${ROVER_PORT_UART} (${COMPANION_GPS_WINDOW:-gps_rtk}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
-            ;;
-        f9p)
-            gps_line="F9P USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_f9p}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
-            ;;
-        *)
-            gps_line="EA/LC29H USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_ea}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
-            ;;
-    esac
+    companion_rtk_resolve_sink
+    if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" ]]; then
+        sink_line="mavlink_rtcm → ${COMPANION_MAVLINK_RTCM} (no rover_zmq)"
+        gps_line="(skipped — FC GPS via GPS_RTCM_DATA)"
+    else
+        sink_line="rover_uart → rover_zmq + emulate_gps_to_px4"
+        case "${COMPANION_GPS_MODULE:-ea}" in
+            da)
+                gps_line="DA UART ${ROVER_PORT_UART} (${COMPANION_GPS_WINDOW:-gps_rtk}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+                ;;
+            f9p)
+                gps_line="F9P USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_f9p}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+                ;;
+            *)
+                gps_line="EA/LC29H USB ${ROVER_PORT} (${COMPANION_GPS_WINDOW:-gps_ea}) + NMEA → ${COMPANION_PX4_GPS_PORT}"
+                ;;
+        esac
+    fi
     cat <<EOF
 Companion topology (Raspberry Pi 5):
   GPS rover — ${gps_line}
   UART2 ${UART2_GS_RADIO}  — GS radio (ZMQ_to_comm PY)${SERIAL_DEVICE:+ (${SERIAL_DEVICE})}
   UART3 ${UART3_PX4_MAVLINK}  — PX4 MAVLink
-  RTK path — ${rtk_line} → $(companion_gps_module_label | cut -d' ' -f1)
+  RTK path — ${rtk_line}
+  RTK sink — ${sink_line}
 EOF
 }
 
 start_gps_combo() {
+    companion_rtk_resolve_sink
+    if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" ]]; then
+        echo "RTK sink=mavlink_rtcm — skipping rover_zmq / emulate_gps; starting rtcm_to_mavlink…" >&2
+        pkill -TERM -f "GPS_RTK/combination/rover_zmq.py" 2>/dev/null || true
+        pkill -TERM -f "emulate_gps_to_px4" 2>/dev/null || true
+        for old_win in gps_ea gps_rtk gps_f9p; do
+            tmux kill-window -t "${TMUX_SESSION}:${old_win}" 2>/dev/null || true
+        done
+        if ! companion_rtcm_mavlink_start_in_tmux "${TMUX_SESSION}" "${COMPANION_PYTHON:-${PYTHON}}" "${CATSWARM_ROOT}"; then
+            echo "WARNING: rtcm_to_mavlink failed to start — continuing with HA/SM only." >&2
+            COMPANION_GPS_WINDOW=""
+            return 0
+        fi
+        COMPANION_GPS_WINDOW="${COMPANION_RTCM_MAV_WINDOW:-rtcm_mav}"
+        sleep 1
+        if ! tmux list-windows -t "${TMUX_SESSION}" -F "#{window_name}" 2>/dev/null | grep -qx "${COMPANION_GPS_WINDOW}"; then
+            echo "WARNING: tmux window ${TMUX_SESSION}:${COMPANION_GPS_WINDOW} missing after rtcm_mav start — continuing." >&2
+            COMPANION_GPS_WINDOW=""
+            return 0
+        fi
+        return 0
+    fi
+
+    # rover_uart: stop any previous mavlink RTCM bridge, then start GPS as usual.
+    pkill -TERM -f "GPS_RTK/combination/rtcm_to_mavlink.py" 2>/dev/null || true
+    tmux kill-window -t "${TMUX_SESSION}:${COMPANION_RTCM_MAV_WINDOW:-rtcm_mav}" 2>/dev/null || true
+
     companion_gps_apply_module
     if ! companion_gps_boot_resolve_available; then
         echo "WARNING: no available GPS rover — skipping GPS window." >&2
@@ -231,6 +275,8 @@ kill_companion() {
     pkill -TERM -f "hardware_adapter/python/zmq_commands_mavlink.py" 2>/dev/null || true
     pkill -TERM -f "GPS_RTK/combination/rover_zmq.py" 2>/dev/null || true
     pkill -TERM -f "GPS_RTK/PX4Integration/emulate_gps_to_px4.py" 2>/dev/null || true
+    pkill -TERM -f "GPS_RTK/combination/rtcm_to_mavlink.py" 2>/dev/null || true
+    pkill -TERM -f "startup_scripts/util/qgc_mavlink_streams.py" 2>/dev/null || true
     sleep 0.4
     if tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
         tmux kill-session -t "${TMUX_SESSION}"
@@ -238,6 +284,44 @@ kill_companion() {
     else
         echo "start_companion_drone_tmux.sh: tmux session ${TMUX_SESSION} not running" >&2
     fi
+}
+
+# Raise HIGHRES_IMU + OPTICAL_FLOW_RAD on the mavlink-server/QGC instance (TCP :5760).
+# HA SET_MESSAGE_INTERVAL on UDP :14540 does not make those appear in QGC by default.
+start_qgc_mavlink_streams() {
+    local script="${SCRIPT_DIR}/util/qgc_mavlink_streams.py"
+    local py="${COMPANION_PYTHON:-${PYTHON}}"
+    local mav="${COMPANION_QGC_MAVLINK:-tcp:127.0.0.1:5760}"
+    local hz="${COMPANION_QGC_STREAM_HZ:-50}"
+    local log="${COMPANION_QGC_STREAM_LOG:-/tmp/qgc_mavlink_streams.log}"
+
+    pkill -TERM -f "startup_scripts/util/qgc_mavlink_streams.py" 2>/dev/null || true
+    sleep 0.2
+    if [[ ! -f "${script}" ]]; then
+        echo "WARNING: missing ${script} — QGC IMU/OF stream request skipped." >&2
+        return 0
+    fi
+    echo "Starting QGC MAVLink stream requester…"
+    echo "  mavlink: ${mav}  hz: ${hz}  log: ${log}"
+    local run_py="${py}"
+    # Fleet Pi: conda env RL has pymavlink; plain python3 often does not.
+    if [[ ! -x "${run_py}" ]] || ! "${run_py}" -c "import pymavlink" >/dev/null 2>&1; then
+        if [[ -x "${HOME}/miniconda/envs/RL/bin/python" ]]; then
+            run_py="${HOME}/miniconda/envs/RL/bin/python"
+        elif [[ -x "${HOME}/miniconda3/envs/RL/bin/python" ]]; then
+            run_py="${HOME}/miniconda3/envs/RL/bin/python"
+        fi
+    fi
+    if ! "${run_py}" -c "import pymavlink" >/dev/null 2>&1; then
+        echo "WARNING: pymavlink missing for ${run_py} — QGC IMU/OF stream request skipped." >&2
+        return 0
+    fi
+    nohup "${run_py}" "${script}" \
+        --mavlink="${mav}" \
+        --hz="${hz}" \
+        --target-system="${COMPANION_MAVLINK_TARGET_SYSTEM:-1}" \
+        >>"${log}" 2>&1 &
+    echo "  python: ${run_py}  pid $!"
 }
 
 _KILL=0
@@ -253,6 +337,7 @@ while [ $# -gt 0 ]; do
         --base-host=*) COMPANION_BASE_HOST="${1#*=}"; _RTK_MODE_EXPLICIT=1; export COMPANION_RTK_HOST_EXPLICIT=1; shift ;;
         --wifi) COMPANION_RTK_MODE=wifi; _RTK_MODE_EXPLICIT=1; shift ;;
         --serial|--rf) COMPANION_RTK_MODE=serial; _RTK_MODE_EXPLICIT=1; shift ;;
+        --sink=*) COMPANION_RTK_SINK="${1#--sink=}"; _RTK_SINK_EXPLICIT=1; shift ;;
         --ea|--gps-ea) COMPANION_GPS_MODULE=ea; _GPS_MODULE_EXPLICIT=1; shift ;;
         --da|--gps-da) COMPANION_GPS_MODULE=da; _GPS_MODULE_EXPLICIT=1; shift ;;
         --f9p|--gps-f9p) COMPANION_GPS_MODULE=f9p; _GPS_MODULE_EXPLICIT=1; shift ;;
@@ -317,11 +402,6 @@ elif [ ! -e "${SERIAL_DEVICE}" ]; then
     echo "Warning: serial device not present: ${SERIAL_DEVICE}" >&2
 fi
 
-if [ ! -f "${GPS_LAUNCHER}" ]; then
-    echo "Error: GPS launcher not found: ${GPS_LAUNCHER}" >&2
-    exit 1
-fi
-
 # Resolve this drone's system_manager mission config (MultiInput/multiSetup.list, 1-indexed
 # by DRONE_ID) *before* starting the hardware adapter, so its FLIGHT_DATA_FOR_COMM /
 # COMM_NEIGHBOUR_DATA ports (zmqSysManagerOutPort / zmqSysManagerInPort) can be passed
@@ -384,13 +464,24 @@ fi
 companion_gps_apply_module
 companion_gps_show_current_choice "${COMPANION_GPS_SOURCE:-}"
 
-if [[ "${_RTK_MODE_EXPLICIT}" -eq 1 ]]; then
+if [[ "${_RTK_MODE_EXPLICIT}" -eq 1 || "${_RTK_SINK_EXPLICIT}" -eq 1 ]]; then
     companion_rtk_resolve_mode save
 else
     companion_rtk_resolve_mode
 fi
 companion_rtk_apply_mode
 companion_rtk_show_current_choice "${COMPANION_RTK_SOURCE:-}"
+
+if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" ]]; then
+    RTCM_MAV_LAUNCHER="${CATSWARM_ROOT}/GPS_RTK/startRtcmToMavlinkPI.sh"
+    if [[ ! -f "${RTCM_MAV_LAUNCHER}" ]]; then
+        echo "Error: rtcm_to_mavlink launcher not found: ${RTCM_MAV_LAUNCHER}" >&2
+        exit 1
+    fi
+elif [[ ! -f "${GPS_LAUNCHER}" ]]; then
+    echo "Error: GPS launcher not found: ${GPS_LAUNCHER}" >&2
+    exit 1
+fi
 
 echo ""
 print_topology
@@ -415,13 +506,14 @@ HW_CMD=( "${HW_SCRIPT}"
 )
 if [ -n "${SERIAL_DEVICE}" ]; then
     HW_CMD+=( "--serialcomm=${SERIAL_DEVICE}" )
-    if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
-        HW_CMD+=( "--rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}" )
-        # ZMQ_to_comm defaults telemetry TX to off when --rtk-zmq-bind is set (half-duplex
-        # UART: avoids TX colliding with RTCM RX). This topology needs both RTK downlink
-        # AND drone telemetry uplink on the same radio, so force TX back on explicitly.
-        HW_CMD+=( "--serial-comm-tx" )
-    fi
+fi
+# RF local PUB must not depend on SERIAL_DEVICE (mavlink_rtcm forces USE_RF_RTK_BRIDGE=1).
+if [[ "${COMPANION_USE_RF_RTK_BRIDGE}" -eq 1 ]]; then
+    HW_CMD+=( "--rtk-zmq-bind=${COMPANION_RTK_ZMQ_BIND}" )
+    # ZMQ_to_comm defaults telemetry TX to off when --rtk-zmq-bind is set (half-duplex
+    # UART: avoids TX colliding with RTCM RX). This topology needs both RTK downlink
+    # AND drone telemetry uplink on the same radio, so force TX back on explicitly.
+    HW_CMD+=( "--serial-comm-tx" )
 fi
 if [ -n "${MISSION_SYS_MANAGER_OUT}" ]; then
     HW_CMD+=( "--zmqSysManagerOutPort=${MISSION_SYS_MANAGER_OUT}" )
@@ -436,8 +528,12 @@ echo "  Window:   hardware_adapter_${DRONE_ID}"
 echo "  Version:  ${VERSION_UPPER}"
 echo "  GS UART2: ${SERIAL_DEVICE:-<none>}"
 echo "  RTK mode: ${COMPANION_RTK_MODE} → ${COMPANION_RTK_ZMQ_URL}"
+echo "  RTK sink: ${COMPANION_RTK_SINK}"
 echo "  GPS module: ${COMPANION_GPS_MODULE} → ${COMPANION_GPS_WINDOW}"
 "${HW_CMD[@]}"
+
+# After mavlink-server clients exist: request IMU/OF on the QGC TCP path.
+start_qgc_mavlink_streams
 
 _sync_tmux_conda_env "${TMUX_SESSION}"
 
@@ -493,8 +589,10 @@ start_gps_combo
 echo ""
 echo "Done."
 echo "  Attach: tmux attach -t ${TMUX_SESSION}"
-if [[ -n "${COMPANION_GPS_WINDOW:-}" ]]; then
+if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" && -n "${COMPANION_GPS_WINDOW:-}" ]]; then
+    echo "  Windows: ${HW_WINDOW}, ${COMPANION_GPS_WINDOW} (RTCM→MAVLink; RTK: $(companion_rtk_mode_label))"
+elif [[ -n "${COMPANION_GPS_WINDOW:-}" ]]; then
     echo "  Windows: ${HW_WINDOW}, ${COMPANION_GPS_WINDOW} (GPS: $(companion_gps_module_label); RTK: $(companion_rtk_mode_label))"
 else
-    echo "  Windows: ${HW_WINDOW} (GPS skipped — rover tty missing or GPS start failed; RTK: $(companion_rtk_mode_label))"
+    echo "  Windows: ${HW_WINDOW} (GPS/RTCM skipped; RTK: $(companion_rtk_mode_label); sink: ${COMPANION_RTK_SINK})"
 fi

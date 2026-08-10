@@ -12,8 +12,9 @@
 # Environment (optional overrides):
 #   COMPANION_GPS_MODULE        ea | da | f9p  (explicit one-shot; use save flag to persist)
 #   ROVER_TYPE                  lc29h | f9p (default lc29h; set to f9p with module=f9p)
-#   ROVER_PORT                  USB serial when module=ea/f9p (default: /dev/ttyUSB0; f9p: /dev/ttyACM0)
-#   ROVER_BAUD                  USB baud when module=ea/f9p (EA=460800, DA USB/F9P=115200)
+#   ROVER_PORT                  USB serial when module=ea/f9p (default: /dev/ttyUSB0; f9p ACM: /dev/ttyACM0)
+#   ROVER_BAUD                  USB baud when module=ea/f9p (EA=460800, DA USB/F9P ACM=115200, F9P ttyUSB*=230400)
+#   ROVER_WIRE                  nmea | ubx (f9p fleet → ubx; LC29H → nmea; passed to startRtkCommPI.sh)
 #   ROVER_PORT_UART             DA UART serial when module=da (default: /dev/ttyAMA4)
 #   ROVER_BAUD_UART             DA baud when module=da (default: 115200)
 #   DA_RATE_MS                  NMEA interval ms (EA=100 → 10 Hz; DA/F9P=1000 → 1 Hz)
@@ -27,6 +28,7 @@
 : "${ROVER_TYPE:=lc29h}"
 : "${ROVER_PORT:=/dev/ttyUSB0}"
 : "${ROVER_BAUD:=460800}"
+: "${ROVER_WIRE:=nmea}"
 : "${ROVER_PORT_UART:=/dev/ttyAMA4}"
 : "${ROVER_BAUD_UART:=115200}"
 : "${DA_RATE_MS:=}"
@@ -40,7 +42,7 @@ companion_gps_module_label() {
     case "${COMPANION_GPS_MODULE}" in
         ea) echo "USB rover (${ROVER_PORT} @ ${ROVER_BAUD}, ${DA_RATE_MS:-?} ms)" ;;
         da) echo "DA UART (${ROVER_PORT_UART} @ ${ROVER_BAUD_UART}, ${DA_RATE_MS:-1000} ms)" ;;
-        f9p) echo "F9P USB (${ROVER_PORT} @ ${ROVER_BAUD}, ${DA_RATE_MS:-1000} ms)" ;;
+        f9p) echo "F9P USB (${ROVER_PORT} @ ${ROVER_BAUD}, wire=${ROVER_WIRE:-ubx}, ${DA_RATE_MS:-1000} ms)" ;;
         *) echo "${COMPANION_GPS_MODULE:-unset}" ;;
     esac
 }
@@ -125,7 +127,7 @@ companion_gps_ensure_ports() {
             ;;
         f9p|zed-f9p|ublox)
             if [[ ! -e "${ROVER_PORT:-/dev/ttyACM0}" ]]; then
-                echo "companion_gps: NOTE: F9P rover ${ROVER_PORT:-/dev/ttyACM0} not present yet (USB ACM)" >&2
+                echo "companion_gps: NOTE: F9P rover ${ROVER_PORT:-/dev/ttyACM0} not present yet (USB ACM/USB)" >&2
             fi
             ;;
         *)
@@ -139,7 +141,8 @@ companion_gps_ensure_ports() {
         echo "companion_gps: WARNING: COMPANION_PX4_GPS_PORT=${COMPANION_PX4_GPS_PORT} (fleet standard is ${px4_need})" >&2
     fi
 
-    export COMPANION_PX4_GPS_PORT ROVER_PORT_UART ROVER_PORT ROVER_BAUD ROVER_BAUD_UART DA_RATE_MS
+    export COMPANION_PX4_GPS_PORT ROVER_PORT_UART ROVER_PORT ROVER_BAUD ROVER_BAUD_UART \
+        ROVER_WIRE DA_RATE_MS
     if [[ "${strict}" == "1" && "${missing}" -eq 1 ]]; then
         echo "companion_gps: ERROR: UART validation failed (COMPANION_VALIDATE_UART_STRICT=1)" >&2
         return 1
@@ -151,7 +154,7 @@ companion_gps_load_saved() {
     local state_file
     local saved_module="" saved_rover_port="" saved_rover_baud=""
     local saved_rover_port_uart="" saved_rover_baud_uart="" saved_da_rate_ms=""
-    local saved_rover_type=""
+    local saved_rover_type="" saved_rover_wire=""
     local legacy_ea_port="" legacy_ea_baud="" legacy_da_port="" legacy_da_baud=""
     state_file="$(companion_gps_state_file)"
     if [[ ! -f "${state_file}" ]]; then
@@ -163,6 +166,7 @@ companion_gps_load_saved() {
     saved_rover_type="${ROVER_TYPE:-}"
     saved_rover_port="${ROVER_PORT:-}"
     saved_rover_baud="${ROVER_BAUD:-}"
+    saved_rover_wire="${ROVER_WIRE:-}"
     saved_rover_port_uart="${ROVER_PORT_UART:-}"
     saved_rover_baud_uart="${ROVER_BAUD_UART:-}"
     saved_da_rate_ms="${DA_RATE_MS:-}"
@@ -187,6 +191,9 @@ companion_gps_load_saved() {
     elif [[ -n "${legacy_ea_baud}" ]]; then
         ROVER_BAUD="${legacy_ea_baud}"
     fi
+    if [[ -n "${saved_rover_wire}" ]]; then
+        ROVER_WIRE="${saved_rover_wire}"
+    fi
     if [[ -n "${saved_rover_port_uart}" ]]; then
         ROVER_PORT_UART="${saved_rover_port_uart}"
     elif [[ -n "${legacy_da_port}" ]]; then
@@ -210,21 +217,33 @@ companion_gps_save_module() {
     state_file="$(companion_gps_state_file)"
     mkdir -p "$(dirname "${state_file}")"
     case "$(printf '%s' "${COMPANION_GPS_MODULE:-ea}" | tr '[:upper:]' '[:lower:]')" in
-        da|uart|serial|d) rate_baud="${ROVER_BAUD_UART}" ;;
-        f9p|zed-f9p|ublox) ROVER_TYPE=f9p ;;
-        *) ROVER_TYPE="${ROVER_TYPE:-lc29h}" ;;
+        da|uart|serial|d)
+            rate_baud="${ROVER_BAUD_UART}"
+            : "${ROVER_WIRE:=nmea}"
+            ;;
+        f9p|zed-f9p|ublox)
+            ROVER_TYPE=f9p
+            # Absolute: file-top default ROVER_WIRE=nmea must not stick on f9p.
+            ROVER_WIRE=ubx
+            ;;
+        *)
+            ROVER_TYPE="${ROVER_TYPE:-lc29h}"
+            : "${ROVER_WIRE:=nmea}"
+            ;;
     esac
     if [[ -z "${DA_RATE_MS:-}" ]]; then
         DA_RATE_MS="$(companion_gps_default_rate_ms "${rate_baud}")"
     fi
     : "${ROVER_TYPE:=lc29h}"
+    : "${ROVER_WIRE:=nmea}"
     cat > "${state_file}" <<EOF
 # Last companion GPS rover module (edit or use switch_EAUSB_DAUART.sh --ea|--da|--f9p)
-# USB: EA @ 460800/10Hz, DA @ 115200/1Hz, or F9P @ 115200/1Hz (ROVER_TYPE=f9p).
+# USB: EA @ 460800/10Hz, DA @ 115200/1Hz, F9P ACM @ 115200/1Hz or F9P ttyUSB* @ 230400/1Hz (ROVER_WIRE=ubx).
 COMPANION_GPS_MODULE=${COMPANION_GPS_MODULE}
 ROVER_TYPE=${ROVER_TYPE}
 ROVER_PORT=${ROVER_PORT}
 ROVER_BAUD=${ROVER_BAUD}
+ROVER_WIRE=${ROVER_WIRE}
 ROVER_PORT_UART=${ROVER_PORT_UART}
 ROVER_BAUD_UART=${ROVER_BAUD_UART}
 DA_RATE_MS=${DA_RATE_MS}
@@ -301,12 +320,13 @@ companion_gps_show_current_choice() {
             echo "  Stack:  startRtkCommPI.sh → rover_zmq + emulate_gps_to_px4"
             ;;
         f9p)
-            echo "  Module: u-blox ZED-F9P (USB ACM)"
+            echo "  Module: u-blox ZED-F9P (USB ACM or USB UART)"
             echo "  Type:   f9p"
             echo "  Port:   ${ROVER_PORT} @ ${ROVER_BAUD}"
+            echo "  Wire:   ${ROVER_WIRE:-ubx}"
             echo "  Rate:   ${DA_RATE_MS:-1000} ms (meas rate)"
             echo "  PX4:    NMEA → ${COMPANION_PX4_GPS_PORT}"
-            echo "  Stack:  startRtkCommPI.sh --rover-type f9p → rover_zmq + emulate_gps_to_px4"
+            echo "  Stack:  startRtkCommPI.sh --rover-type f9p --rover-wire ${ROVER_WIRE:-ubx}"
             ;;
         *)
             echo "  Module: ${COMPANION_GPS_MODULE:-unset}"
@@ -331,6 +351,7 @@ companion_gps_apply_module() {
         ea|usb|e)
             COMPANION_GPS_MODULE=ea
             ROVER_TYPE=lc29h
+            : "${ROVER_WIRE:=nmea}"
             COMPANION_GPS_WINDOW=gps_ea
             COMPANION_ROVER_PORT="${ROVER_PORT}"
             COMPANION_ROVER_BAUD="${ROVER_BAUD}"
@@ -339,6 +360,7 @@ companion_gps_apply_module() {
         da|uart|serial|d)
             COMPANION_GPS_MODULE=da
             ROVER_TYPE=lc29h
+            : "${ROVER_WIRE:=nmea}"
             COMPANION_GPS_WINDOW=gps_rtk
             COMPANION_ROVER_PORT="${ROVER_PORT_UART}"
             COMPANION_ROVER_BAUD="${ROVER_BAUD_UART}"
@@ -347,9 +369,14 @@ companion_gps_apply_module() {
         f9p|zed-f9p|ublox)
             COMPANION_GPS_MODULE=f9p
             ROVER_TYPE=f9p
+            # Absolute: file-top default ROVER_WIRE=nmea / ROVER_BAUD=460800 must not stick on f9p.
+            ROVER_WIRE=ubx
             COMPANION_GPS_WINDOW=gps_f9p
             : "${ROVER_PORT:=/dev/ttyACM0}"
-            : "${ROVER_BAUD:=115200}"
+            case "${ROVER_PORT}" in
+                /dev/ttyUSB*) ROVER_BAUD=230400 ;;
+                *) ROVER_BAUD=115200 ;;
+            esac
             COMPANION_ROVER_PORT="${ROVER_PORT}"
             COMPANION_ROVER_BAUD="${ROVER_BAUD}"
             COMPANION_USE_PX4_NMEA=1
@@ -358,6 +385,7 @@ companion_gps_apply_module() {
             echo "companion_gps_module: unknown COMPANION_GPS_MODULE=${COMPANION_GPS_MODULE}; using ea" >&2
             COMPANION_GPS_MODULE=ea
             ROVER_TYPE=lc29h
+            : "${ROVER_WIRE:=nmea}"
             COMPANION_GPS_WINDOW=gps_ea
             COMPANION_ROVER_PORT="${ROVER_PORT}"
             COMPANION_ROVER_BAUD="${ROVER_BAUD}"
@@ -368,12 +396,12 @@ companion_gps_apply_module() {
         DA_RATE_MS="$(companion_gps_default_rate_ms "${COMPANION_ROVER_BAUD}")"
     fi
     export COMPANION_GPS_MODULE COMPANION_GPS_WINDOW COMPANION_ROVER_PORT COMPANION_ROVER_BAUD \
-        COMPANION_USE_PX4_NMEA ROVER_TYPE ROVER_PORT ROVER_BAUD ROVER_PORT_UART ROVER_BAUD_UART \
-        DA_RATE_MS COMPANION_PX4_GPS_PORT
+        COMPANION_USE_PX4_NMEA ROVER_TYPE ROVER_PORT ROVER_BAUD ROVER_WIRE ROVER_PORT_UART \
+        ROVER_BAUD_UART DA_RATE_MS COMPANION_PX4_GPS_PORT
 }
 
 # Boot / start helper: keep saved profile when its rover tty exists; otherwise sniff
-# F9P ACM → LC29H EA USB → DA USB → DA UART, persist the hit, and re-apply.
+# F9P ACM → F9P USB@230400 → LC29H EA USB → DA USB → DA UART, persist the hit, and re-apply.
 # Returns 0 when a rover char device is available, 1 when nothing usable was found.
 companion_gps_boot_resolve_available() {
     local script_dir sniff_py python token_line token port_extra profile
@@ -488,6 +516,9 @@ companion_gps_start_in_tmux() {
         return 1
     fi
 
+    # startRtkCommPI.sh reads ROVER_WIRE from the environment.
+    export ROVER_WIRE="${ROVER_WIRE:-nmea}"
+
     args=(
         --rtk-zmq-url="${rtk_zmq_url}"
         --rover-type="${ROVER_TYPE:-lc29h}"
@@ -509,9 +540,37 @@ companion_gps_start_in_tmux() {
     "${launcher}" "${args[@]}"
 }
 
+# RTCM → GPS_RTCM_DATA (mavlink) path: no rover_zmq / emulate_gps_to_px4.
+companion_rtcm_mavlink_start_in_tmux() {
+    local session="$1"
+    local python="${2:-python3}"
+    local root="${3:-}"
+    local launcher="${root}/GPS_RTK/startRtcmToMavlinkPI.sh"
+    local window="${COMPANION_RTCM_MAV_WINDOW:-rtcm_mav}"
+
+    if [[ -z "${root}" ]]; then
+        echo "companion_rtcm_mavlink_start_in_tmux: CATSWARM_ROOT required" >&2
+        return 1
+    fi
+    if [[ ! -x "${launcher}" && ! -f "${launcher}" ]]; then
+        echo "companion_rtcm_mavlink_start_in_tmux: missing ${launcher}" >&2
+        return 1
+    fi
+
+    : "${COMPANION_BASE_HOST:=192.168.0.43}"
+    : "${COMPANION_BASE_PORT_NUM:=5560}"
+    : "${COMPANION_RTK_ZMQ_BIND:=tcp://127.0.0.1:5562}"
+    : "${COMPANION_MAVLINK_RTCM:=udpout:127.0.0.1:14580}"
+
+    tmux kill-window -t "${session}:${window}" 2>/dev/null || true
+    echo "Starting rtcm_to_mavlink in ${session}:${window} → ${COMPANION_MAVLINK_RTCM}…" >&2
+    tmux new-window -t "${session}" -n "${window}" \
+        "export COMPANION_BASE_HOST='${COMPANION_BASE_HOST}' COMPANION_BASE_PORT_NUM='${COMPANION_BASE_PORT_NUM}' COMPANION_RTK_ZMQ_BIND='${COMPANION_RTK_ZMQ_BIND}' COMPANION_MAVLINK_RTCM='${COMPANION_MAVLINK_RTCM}' PYTHON='${python}'; exec '${launcher}'"
+}
+
 # Write a full fleet profile into ~/.config/companion-gps (flush, not merge).
 # Profiles: ea | da-usb | da-uart | f9p
-# Optional 2nd arg: rover device path (used by f9p sniff for detected ttyACM*).
+# Optional 2nd arg: rover device path (used by f9p sniff for detected ttyACM*/ttyUSB*).
 companion_gps_write_fleet_profile() {
     local profile
     local port_override="${2:-}"
@@ -526,6 +585,7 @@ companion_gps_write_fleet_profile() {
             # Always USB0 for EA — do not keep a prior F9P ACM path.
             ROVER_PORT="${port_override:-/dev/ttyUSB0}"
             ROVER_BAUD=460800
+            ROVER_WIRE=nmea
             DA_RATE_MS=100
             ;;
         da-usb|da_usb|usb-da)
@@ -533,6 +593,7 @@ companion_gps_write_fleet_profile() {
             ROVER_TYPE=lc29h
             ROVER_PORT="${port_override:-/dev/ttyUSB0}"
             ROVER_BAUD=115200
+            ROVER_WIRE=nmea
             DA_RATE_MS=1000
             ;;
         da|da-uart|da_uart|uart-da)
@@ -540,13 +601,18 @@ companion_gps_write_fleet_profile() {
             ROVER_TYPE=lc29h
             ROVER_BAUD="${ROVER_BAUD:-460800}"
             ROVER_BAUD_UART=115200
+            ROVER_WIRE=nmea
             DA_RATE_MS=1000
             ;;
         f9p|zed-f9p|ublox)
             COMPANION_GPS_MODULE=f9p
             ROVER_TYPE=f9p
             ROVER_PORT="${port_override:-/dev/ttyACM0}"
-            ROVER_BAUD=115200
+            case "${ROVER_PORT}" in
+                /dev/ttyUSB*) ROVER_BAUD=230400 ;;
+                *) ROVER_BAUD=115200 ;;
+            esac
+            ROVER_WIRE=ubx
             # 1 Hz — lower rate for flight; emulate_gps still heartbeats GGA so PX4 stays alive.
             DA_RATE_MS=1000
             ;;

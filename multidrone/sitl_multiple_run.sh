@@ -35,8 +35,6 @@ function spawn_model() {
 	[ ! -d "$working_dir" ] && mkdir -p "$working_dir"
 
 	pushd "$working_dir" &>/dev/null
-	echo "starting instance $N in $(pwd)"
-	$build_path/bin/px4 -i $N -d "$build_path/etc" >out.log 2>err.log &
 
 	set --
 	set -- ${@} ${src_path}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/scripts/jinja_gen.py
@@ -52,9 +50,32 @@ function spawn_model() {
 
 	python3 ${@}
 
+	# CatSwarm: optical flow + rangefinder → OPTICAL_FLOW / DISTANCE_SENSOR.
+	# CATSWARM_OF_MODE=mockup (default) uses the non-rendering flow plugin so OF also
+	# streams headless; =camera restores the px4flow camera path (needs GL).
+	if [ "$MODEL" = "iris" ]; then
+		INJECT_SENSORS="${INJECT_IRIS_SENSORS:-/home/valentin/PX4-Autopilot/Tools/simulation/inject_iris_sensors.py}"
+		if [ -f "$INJECT_SENSORS" ]; then
+			python3 "$INJECT_SENSORS" /tmp/${MODEL}_${N}.sdf
+		else
+			echo "WARNING: $INJECT_SENSORS missing — iris spawned without OF/rangefinder"
+		fi
+	fi
+
 	echo "Spawning ${MODEL}_${N} at ${X} ${Y} ${Z}"
 
+	# CatSwarm: spawn the model (and its sensor/flow plugins) in Gazebo
+	# *before* starting bin/px4. PX4's Sensors::init() calls
+	# InitializeVehicleOpticalFlow() exactly once at boot and only wires up the
+	# OPTICAL_FLOW_RAD mavlink stream if sensor_optical_flow is already
+	# advertised at that instant. Starting px4 first (old order) means the
+	# late-arriving HIL_OPTICAL_FLOW from the just-spawned px4flow model is
+	# always missed — OPTICAL_FLOW_RAD then never streams for the rest of the
+	# session, independent of SDF/.post correctness.
 	gz model --spawn-file=/tmp/${MODEL}_${N}.sdf --model-name=${MODEL}_${N} -x ${X} -y ${Y} -z ${Z}
+
+	echo "starting instance $N in $(pwd)"
+	$build_path/bin/px4 -i $N -d "$build_path/etc" >out.log 2>err.log &
 
 	popd &>/dev/null
 

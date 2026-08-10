@@ -22,6 +22,7 @@ Scripts in this folder start the **CatSwarm companion stack** on a **Raspberry P
 | **`companion_rtk_connection.sh`** | WiFi/LAN vs serial RF RTK path selection |
 | **`sniff_companion_gps_profile.py`** | Probe F9P ACM then LC29H EA/DA (used by flush + boot fallback) |
 | **`flush_companion_gps_from_hw.sh`** | Sniff hardware and rewrite `~/.config/companion-gps` |
+| **`qgc_mavlink_streams.py`** | Boot helper: `SET_MESSAGE_INTERVAL` for `HIGHRES_IMU` + `OPTICAL_FLOW_RAD` on QGC TCP `:5760` |
 
 ## Unified serial parameters (`util/gnss_serial_args.sh`)
 

@@ -1,0 +1,11 @@
+.git
+**/.git
+**/__pycache__
+**/.pytest_cache
+*.pth
+model_v1
+model_v2
+model_v3
+model_v4
+rl_cnn_fov_forward_31_5
+*.mhtml

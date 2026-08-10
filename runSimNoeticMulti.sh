@@ -124,6 +124,8 @@ if [ "$POSITIONS_FILE" = "$DEFAULT_POSITIONS" ]; then
         --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw"
         --volume="${POSITIONS_FILE}:${CONTAINER_POSITIONS_PATH}:rw"
         --volume="${SCRIPT_DIR}/multidrone/sitl_multiple_run.sh:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_multiple_run2.sh:rw"
+        --volume="${SCRIPT_DIR}/multidrone/inject_iris_sensors.py:/home/valentin/PX4-Autopilot/Tools/simulation/inject_iris_sensors.py:ro"
+        --volume="${SCRIPT_DIR}/multidrone/airframes/10015_gazebo-classic_iris.post:/home/valentin/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/10015_gazebo-classic_iris.post:ro"
     )
 else
     # Use custom positions file
@@ -133,6 +135,8 @@ else
         --volume="${SCRIPT_DIR}/multidrone/positions.txt:/home/valentin/PX4-Autopilot/Tools/simulation/positions.txt:rw"
         --volume="${POSITIONS_FILE}:${CONTAINER_POSITIONS_PATH}:ro"
         --volume="${SCRIPT_DIR}/multidrone/sitl_multiple_run.sh:/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_multiple_run2.sh:rw"
+        --volume="${SCRIPT_DIR}/multidrone/inject_iris_sensors.py:/home/valentin/PX4-Autopilot/Tools/simulation/inject_iris_sensors.py:ro"
+        --volume="${SCRIPT_DIR}/multidrone/airframes/10015_gazebo-classic_iris.post:/home/valentin/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/airframes/10015_gazebo-classic_iris.post:ro"
     )
 fi
 
@@ -142,11 +146,18 @@ if [ -f "$XAUTH_FILE" ]; then
 fi
 
 # Run docker container with the simulation command
+# Pin Gazebo transport to loopback. Without this, gzserver floods
+# "Exception sending a multicast message: Network is unreachable" on hosts
+# with no working multicast route; after a while simulator_mavlink poll
+# timeouts freeze HIL (DISTANCE_SENSOR / OF / IMU stop → FLIG bottom_clearance=-1).
 docker run -it --net=host \
            --cap-drop=all \
            --privileged \
            --env="DISPLAY=$DISPLAY" \
            --env="QT_X11_NO_MITSHM=1" \
+           --env="CATSWARM_OF_MODE=${CATSWARM_OF_MODE:-mockup}" \
+           --env="GAZEBO_IP=127.0.0.1" \
+           --env="GAZEBO_MASTER_URI=http://127.0.0.1:11345" \
            --env="XAUTHORITY=${XAUTH_FILE}" \
            "${DOCKER_VOLUMES[@]}" \
            --name=${CONTAINER_NAME} \

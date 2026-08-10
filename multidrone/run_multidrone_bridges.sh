@@ -116,6 +116,11 @@ create_drone_window() {
         "$MAVLINK_TO_ZMQ_BIN --udp:${mavlink_udp_port} --zmq:${mavlink_zmq_port} --log:${LOG_BASE_DIR}/drone${drone_id}/mavlink_to_ZMQ" C-m
     
     # Right pane: zmq_commands_mavlink
+    # NOTE: this launcher runs the *C* bridges, whose arg parser rejects any unknown
+    # `-`-prefixed option (main_zmq_commands_mavlink.c). Do NOT add --zmqFlightData
+    # here: the C bridge has no GPS-quality override PUSH, so the flag only makes the
+    # process exit rc=1. GPS-quality control is Python-bridge only — see
+    # hardware_adapter/hardware_adapter_multi.sh (--version=PY).
     tmux send-keys -t "$TMUX_SESSION:$window_name.1" \
         "$ZMQ_COMMANDS_MAVLINK_BIN --udp:${zmq_commands_udp_port} --zmq:${zmq_commands_zmq_port} --log:${LOG_BASE_DIR}/drone${drone_id}/zmq_commands" C-m
     
