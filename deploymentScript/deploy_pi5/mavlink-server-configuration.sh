@@ -145,7 +145,9 @@ address = "${tcp_addr}"
 port = ${tcp_port}
 
 # Companion injects (e.g. GPS_INJECT_DATA / RTCM→MAVLink) listen here.
+# address required — run-mavlink-server.sh skips [[udp_server]] without it.
 [[udp_server]]
+address = "0.0.0.0"
 port = ${UDP_SERVER_PORT}
 
 # Optional alternate inject port (not enabled by default):

@@ -563,9 +563,9 @@ companion_rtcm_mavlink_start_in_tmux() {
     : "${COMPANION_MAVLINK_RTCM:=udpout:127.0.0.1:14580}"
 
     tmux kill-window -t "${session}:${window}" 2>/dev/null || true
-    echo "Starting rtcm_to_mavlink in ${session}:${window} → ${COMPANION_MAVLINK_RTCM}…" >&2
+    echo "Starting rtcm_to_mavlink in ${session}:${window} mode=${COMPANION_RTK_MODE:-serial} → ${COMPANION_MAVLINK_RTCM}…" >&2
     tmux new-window -t "${session}" -n "${window}" \
-        "export COMPANION_BASE_HOST='${COMPANION_BASE_HOST}' COMPANION_BASE_PORT_NUM='${COMPANION_BASE_PORT_NUM}' COMPANION_RTK_ZMQ_BIND='${COMPANION_RTK_ZMQ_BIND}' COMPANION_MAVLINK_RTCM='${COMPANION_MAVLINK_RTCM}' PYTHON='${python}'; exec '${launcher}'"
+        "export COMPANION_RTK_MODE='${COMPANION_RTK_MODE:-serial}' COMPANION_BASE_HOST='${COMPANION_BASE_HOST}' COMPANION_BASE_PORT_NUM='${COMPANION_BASE_PORT_NUM}' COMPANION_RTK_ZMQ_BIND='${COMPANION_RTK_ZMQ_BIND}' COMPANION_MAVLINK_RTCM='${COMPANION_MAVLINK_RTCM}' PYTHON='${python}'; exec '${launcher}'"
 }
 
 # Write a full fleet profile into ~/.config/companion-gps (flush, not merge).

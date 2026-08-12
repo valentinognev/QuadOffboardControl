@@ -128,6 +128,16 @@ RSYNC_EXCLUDES=(
   --exclude='**/SystemManagerMain'
   --exclude='CommSimVerify'
   --exclude='**/CommSimVerify'
+  --exclude='mavlink_to_ZMQ'
+  --exclude='**/mavlink_to_ZMQ'
+  --exclude='mavlink_to_ZMQ_release'
+  --exclude='**/mavlink_to_ZMQ_release'
+  --exclude='zmq_commands_mavlink'
+  --exclude='**/zmq_commands_mavlink'
+  --exclude='zmq_commands_mavlink_release'
+  --exclude='**/zmq_commands_mavlink_release'
+  --exclude='simplegs'
+  --exclude='**/simplegs'
 )
 
 REPO_HARDWARE_ADAPTER_SSH="git@github.com:valentinognev/hardware_adapter.git"
@@ -1460,6 +1470,9 @@ phase_python() {
 
 # --- build ---
 
+# Pi5: fixed parallelism (nproc can OOM / thrash under concurrent HA+SM builds).
+COMPANION_BUILD_JOBS="${COMPANION_BUILD_JOBS:-4}"
+
 phase_build() {
   progress_tick "build C bridges"
   log "=== phase: build ==="
@@ -1467,14 +1480,27 @@ phase_build() {
   export DEBIAN_FRONTEND=noninteractive
   # Update often skips phase_system — always ensure HA/SM build deps (incl. Eigen3).
   ensure_companion_build_packages
-  run_as_user make -C "${RL_ROOT}/hardware_adapter" -j"$(nproc)"
+  # Wipe host-arch root ELFs left by older deploys (rsync now excludes them).
+  rm -f "${RL_ROOT}/hardware_adapter/mavlink_to_ZMQ" \
+        "${RL_ROOT}/hardware_adapter/mavlink_to_ZMQ_release" \
+        "${RL_ROOT}/hardware_adapter/zmq_commands_mavlink" \
+        "${RL_ROOT}/hardware_adapter/zmq_commands_mavlink_release" \
+        "${RL_ROOT}/hardware_adapter/simplegs"
+  log "HA make -j${COMPANION_BUILD_JOBS}"
+  run_as_user make -C "${RL_ROOT}/hardware_adapter" -j"${COMPANION_BUILD_JOBS}"
+  for b in mavlink_to_ZMQ zmq_commands_mavlink; do
+    local hb="${RL_ROOT}/hardware_adapter/${b}"
+    [ -x "${hb}" ] || die "${b} missing after HA make"
+    file -b "${hb}" | grep -qi aarch64 || die "${b} is not aarch64 after build: $(file -b "${hb}")"
+  done
 
   if [ "${BUILD_CPP_SYSMGR}" -eq 1 ]; then
     progress_tick "build system_manager C++"
     local sm_cpp="${RL_ROOT}/system_manager/system_managerCPP"
     [ -x "${sm_cpp}/build.sh" ] || die "missing system_managerCPP/build.sh"
     # build.sh uses cwd-relative build/; must run from system_managerCPP.
-    run_as_user bash -lc "cd $(printf '%q' "${sm_cpp}") && ./build.sh Release"
+    # Prefer COMPANION_BUILD_JOBS over build.sh's nproc default.
+    run_as_user bash -lc "cd $(printf '%q' "${sm_cpp}") && COMPANION_BUILD_JOBS=${COMPANION_BUILD_JOBS} ./build.sh Release"
     local built=""
     if [ -f "${RL_ROOT}/system_manager/SystemManagerMain" ]; then
       built="${RL_ROOT}/system_manager/SystemManagerMain"

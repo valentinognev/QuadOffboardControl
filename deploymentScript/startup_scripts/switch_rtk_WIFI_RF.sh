@@ -17,6 +17,8 @@ CATSWARM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/util/companion_rtk_connection.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/util/companion_gps_module.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/util/ensure_mavlink_rtcm_udp.sh"
 
 SESSION="${CATSWARM_TMUX_SESSION:-catswarm_sim}"
 DRONE_ID=3
@@ -42,8 +44,8 @@ Options:
   --base-host=IP          GS IP for WiFi RTK
   --sink=mavlink_rtcm|rover_uart
                           Correction sink (default rover_uart). mavlink_rtcm starts
-                          rtcm_to_mavlink (no rover_zmq); forces RF bridge PUB on :5562.
-                          For mavlink sink both WiFi + RF sources are used regardless of mode.
+                          rtcm_to_mavlink (no rover_zmq). RF Apply (--serial) → rf-only
+                          bridge; WiFi Apply (--wifi) → wifi-only bridge.
 
 Saved GPS preference: $(companion_gps_state_file)
 Saved RTK preference:  $(companion_rtk_state_file)
@@ -151,6 +153,8 @@ RTCM_WIN="${COMPANION_RTCM_MAV_WINDOW:-rtcm_mav}"
 
 if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" ]]; then
   # Stop rover_uart stack; start rtcm_to_mavlink.
+  # RTCM inject needs mavlink-server udpserver :14580 (often missing on older fleet conf).
+  companion_ensure_mavlink_rtcm_udp || echo "switch_rtk_WIFI_RF.sh: WARN ensure 14580 failed — RTCM may not reach FC" >&2
   pkill -TERM -f "GPS_RTK/combination/rover_zmq.py" 2>/dev/null || true
   pkill -TERM -f "emulate_gps_to_px4" 2>/dev/null || true
   for old_win in gps_ea gps_rtk gps_f9p; do

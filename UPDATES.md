@@ -2,6 +2,14 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-08-11] mavlink-server :14580 required for RTCM inject
+- Cause: fleet `mavlink-server.conf` wrote `[[udp_server]]` **without** `address`; `run-mavlink-server.sh` skipped it → no `udpserver://0.0.0.0:14580`; Apply RTK bridge sent RTCM into the void (D2 worked only because conf was hand-fixed).
+- Fix: template + `mavlink-server-configuration.sh` include `address = "0.0.0.0"`; `ensure_mavlink_rtcm_udp.sh` runs on Apply RTK (`--sink=mavlink_rtcm`).
+
+## [2026-08-11] RTCM mavlink bridge: RF vs WiFi exclusive
+- Companion switch + `startRtcmToMavlinkPI`: serial/RF Apply → rf-only bridge; WiFi Apply → wifi-only. No forced dual path for mavlink on wifi mode.
+- OB Apply RTK always passes `--sink=mavlink_rtcm`.
+
 ## [2026-08-08] QGC default HIGHRES_IMU + OPTICAL_FLOW_RAD streams
 - Cause: QGC on mavlink-server TCP `:5760` showed `DISTANCE_SENSOR` but not `HIGHRES_IMU` / `OPTICAL_FLOW_RAD`; HA `SET_MESSAGE_INTERVAL` on UDP `:14540` does not raise those rates on the shared QGC path.
 - Fix: `startup_scripts/util/qgc_mavlink_streams.py` requests msgid 105/106 @ 50 Hz on `tcp:127.0.0.1:5760`, refreshed every 10 s; hooked from `start_companion_drone_tmux.sh` (+ kill on `--kill`). Override: `COMPANION_QGC_MAVLINK` / `COMPANION_QGC_STREAM_HZ`.

@@ -21,8 +21,8 @@
 #   COMPANION_RTK_MODE          wifi | serial
 #   COMPANION_RTK_SINK          mavlink_rtcm | rover_uart
 #   COMPANION_RTK_ZMQ_URL       rover_zmq --connect target (rover_uart path)
-#   COMPANION_USE_RF_RTK_BRIDGE 1 = ZMQ_to_comm --rtk-zmq-bind; 0 = WiFi direct
-#                               (forced 1 when sink=mavlink_rtcm — need local :5562 PUB)
+#   COMPANION_USE_RF_RTK_BRIDGE 1 = ZMQ_to_comm --rtk-zmq-bind (serial / RF); 0 = WiFi direct
+#                               (mavlink_rtcm + serial also needs :5562 for rf-only bridge)
 
 : "${COMPANION_BASE_HOST:=192.168.0.43}"
 : "${COMPANION_BASE_PORT_NUM:=5560}"
@@ -266,8 +266,8 @@ companion_rtk_resolve_sink() {
 
 companion_rtk_apply_sink_side_effects() {
     companion_rtk_resolve_sink
-    if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" ]]; then
-        # Dual path: always enable RF reassembly PUB; WiFi host still used by bridge
+    # mavlink_rtcm needs local :5562 PUB only for serial/RF mode (not wifi-only).
+    if [[ "${COMPANION_RTK_SINK}" == "mavlink_rtcm" && "${COMPANION_RTK_MODE}" == "serial" ]]; then
         COMPANION_USE_RF_RTK_BRIDGE=1
     fi
     export COMPANION_USE_RF_RTK_BRIDGE COMPANION_MAVLINK_RTCM
