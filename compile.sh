@@ -14,6 +14,12 @@ echo "=========================================="
 echo "Source directory: $SRC_DIR"
 echo ""
 
+CC=/usr/bin/gcc
+CXX=/usr/bin/g++
+export CC CXX
+echo "Compiler: $CC / $CXX"
+echo ""
+
 # Step 1: Clean and compile hardware_adapter C code
 echo "=========================================="
 echo "Step 1: Cleaning and compiling hardware_adapter C code"

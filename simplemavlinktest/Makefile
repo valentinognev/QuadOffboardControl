@@ -1,4 +1,4 @@
-CC = gcc
+override CC := /usr/bin/gcc
 INCLUDE_DIRS = -I. -I../hardware_adapter
 
 # Debug flags (DEFAULT)

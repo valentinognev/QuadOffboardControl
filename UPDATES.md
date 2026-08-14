@@ -2,6 +2,9 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-08-14] OS gcc for local HA/SM builds
+- `compile.sh` and `simplemavlinktest/Makefile` use `/usr/bin/gcc` / `/usr/bin/g++`. Companion deploy unchanged (HA Makefile / SM `build.sh` already pin the compiler).
+
 ## [2026-08-14] SITL: iris colors match Observation Board
 - `inject_iris_colors.py` rewrites Gazebo script materials to OB palette at spawn (`iris_N` → drone `N`).
 - Wired in `sitl_multiple_run.sh`; bind-mounted by `runSimNoeticMulti.sh`; baked in Noetic Dockerfile.
