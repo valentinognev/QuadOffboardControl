@@ -2,6 +2,11 @@
 
 This file documents the development progress and changes made to the `CatSwarm/general_infrastructure` project by the AI agent.
 
+## [2026-08-14] SITL: iris colors match Observation Board
+- `inject_iris_colors.py` rewrites Gazebo script materials to OB palette at spawn (`iris_N` → drone `N`).
+- Wired in `sitl_multiple_run.sh`; bind-mounted by `runSimNoeticMulti.sh`; baked in Noetic Dockerfile.
+- Spec: ObservationBoard `docs/superpowers/specs/2026-08-12-gazebo-drone-colors-design.md`. Restart sim to see colors (host mount; rebuild image only for bake path).
+
 ## [2026-08-11] mavlink-server :14580 required for RTCM inject
 - Cause: fleet `mavlink-server.conf` wrote `[[udp_server]]` **without** `address`; `run-mavlink-server.sh` skipped it → no `udpserver://0.0.0.0:14580`; Apply RTK bridge sent RTCM into the void (D2 worked only because conf was hand-fixed).
 - Fix: template + `mavlink-server-configuration.sh` include `address = "0.0.0.0"`; `ensure_mavlink_rtcm_udp.sh` runs on Apply RTK (`--sink=mavlink_rtcm`).

@@ -60,6 +60,12 @@ function spawn_model() {
 		else
 			echo "WARNING: $INJECT_SENSORS missing — iris spawned without OF/rangefinder"
 		fi
+		INJECT_COLORS="${INJECT_IRIS_COLORS:-/home/valentin/PX4-Autopilot/Tools/simulation/inject_iris_colors.py}"
+		if [ -f "$INJECT_COLORS" ]; then
+			python3 "$INJECT_COLORS" /tmp/${MODEL}_${N}.sdf ${N} || exit 1
+		else
+			echo "WARNING: $INJECT_COLORS missing — iris spawned with stock Gazebo colors"
+		fi
 	fi
 
 	echo "Spawning ${MODEL}_${N} at ${X} ${Y} ${Z}"
