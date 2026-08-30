@@ -7,6 +7,8 @@ use the stream as input.
 - run_px4_sitl_docker.sh
 - added gazebo_zmq_bridge.cpp
 - added zmq_rec_rtsp_trans.py
+- added gazebo_pose_zmq_bridge.cpp
+- added zmq_pose_listener.py
 
 ## Initial Installation - Video Stream
 
@@ -44,8 +46,8 @@ link tag, add the following sensor:
       </sensor>
 ```
 
-### For model_zmq_bridge.cc
-Inside the containe running the simulation, run:
+### For gazebo_zmq_bridge.cpp
+Add gazebo_zmq_bridge to /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/src inside the container. Then, inside the container running the simulation, run:
 ``` bash
 cd /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic
 mkdir -p build && cd build
@@ -91,8 +93,24 @@ zmq_rec_rtsp_trans.py
 - Back on the device running the simulation connect to the container on another terminal and run, inside the container:
 ```bash
 ./home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/gazebo_zmq_bridge /gazebo/default/iris/base_link/front_camera/image tcp://192.168.1.1:5555
+
+
 ```
 - After establishing all connections, on your Raspberry pi, run:
 ```bash
 hailo-tiling -i rtsp://127.0.0.1:8554/live
 ```
+
+## Initial Installation - Pose Transmition
+
+### For zmq_pose_listener.py
+Download to the pi and run (before running the gazebo_pose_zmq_bridge).
+
+### For gazebo_pose_zmq_bridge.cpp
+Add gazebo_pose_zmq_bridge to /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/src inside the container. Then, given that you've already created "/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/build" on the container and ran "cmake ..", run: 
+```bash
+cd /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/build
+make -j$(nproc) gazebo_pose_zmq_bridge
+find -type f -name gazebo_pose_zmq_bridge -executable -print
+```
+Then copy the output for find and run it as a command.
