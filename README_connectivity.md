@@ -101,7 +101,7 @@ zmq_rec_rtsp_trans.py
 hailo-tiling -i rtsp://127.0.0.1:8554/live
 ```
 
-## Initial Installation - Pose Transmition
+## Pose Transmition
 
 ### For zmq_pose_listener.py
 Download to the pi and run (before running the gazebo_pose_zmq_bridge).
