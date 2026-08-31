@@ -5,6 +5,7 @@ use the stream as input.
 ## Files changed:
 - runSimNoetic.sh
 - run_px4_sitl_docker.sh
+- tiling.py
 - added gazebo_zmq_bridge.cpp
 - added zmq_rec_rtsp_trans.py
 - added gazebo_pose_zmq_bridge.cpp
@@ -104,7 +105,7 @@ hailo-tiling -i rtsp://127.0.0.1:8554/live
 ## Pose Transmition
 
 ### For zmq_pose_listener.py
-Download to the pi and run (before running the gazebo_pose_zmq_bridge).
+Download to the pi and run (before running the gazebo_pose_zmq_bridge). This stage is not necessary, it is simply a test to see that the pose messages are successfully received on the RP.
 
 ### For gazebo_pose_zmq_bridge.cpp
 Add gazebo_pose_zmq_bridge to /home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/src inside the container. Then, given that you've already created "/home/valentin/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/build" on the container and ran "cmake ..", run: 
@@ -114,3 +115,14 @@ make -j$(nproc) gazebo_pose_zmq_bridge
 find -type f -name gazebo_pose_zmq_bridge -executable -print
 ```
 Then copy the output for find and run it as a command.
+
+### For tiling.py
+The change includes retrieving CPU usage, FPS, and Hailo usage in background threads, as well as retrieving the number of tiles once per run, and listening to the pose messages broadcasted from the bridge. However, to show this information as video overlay you'll have to first follow these instructions:
+
+https://github.com/UriTabic/Hailo_docs/blob/main/Recording/Add_CPU_Usage.md
+
+And to run
+```bash
+export HAILO_MONITOR=1
+```
+before running the hailo-tiling app.
